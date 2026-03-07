@@ -466,49 +466,6 @@ walker:priv DeleteComment {
     }
 }
 
-# ===== AI WALKERS =====
-
-walker:priv AIDescribeTask {
-    has title: str,
-        context: str = "";
-
-    can run with Root entry {
-        extra = (" Context: " + self.context) if self.context else " Be specific and actionable.";
-        prompt = f"Write a concise, professional task description (2-3 sentences) for: \"{self.title}\"." + extra;
-        # Use Jac byLLM integration (returns plain text)
-        resp = prompt by llm(temperature=0.2, max_tokens=300);
-        report resp;
-    }
-}
-
-walker:priv AISuggestSubtasks {
-    has title: str,
-        description: str = "";
-
-    can run with Root entry {
-        desc_part = (f" Description: {self.description}.") if self.description else "";
-        prompt = f"Break this task into 3-5 concrete subtasks. Task: \"{self.title}\"." + desc_part + " Return ONLY a JSON array of strings. No other text. Example: [\"subtask 1\", \"subtask 2\"]";
-        resp = prompt by llm(temperature=0.2, max_tokens=300);
-        report resp;
-    }
-}
-
-walker:priv AISmartPriority {
-    has title: str,
-        description: str = "",
-        due_date: str = "";
-
-    can run with Root entry {
-        desc_part = (f" Description: {self.description}.") if self.description else "";
-        due_part = (f" Due date: {self.due_date}.") if self.due_date else "";
-        prompt = f"Analyze this task and recommend a priority. Task: \"{self.title}\"." + desc_part + due_part + " Return ONLY one word — exactly one of: urgent, high, normal, low";
-        resp = prompt by llm(temperature=0.0, max_tokens=20);
-        raw = resp.strip().lower();
-        valid_priorities = ["urgent", "high", "normal", "low"];
-        report (raw if raw in valid_priorities else "normal");
-    }
-}
-
 # ===== VOICE TASK EXTRACTION =====
 
 obj TaskDetails {

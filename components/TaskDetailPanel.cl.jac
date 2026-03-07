@@ -58,12 +58,6 @@ def:pub TaskDetailPanel(
                 </div>
             </div>
             <div className="detail-panel-body">
-                    <div className="ai-assistant-panel">
-                        <h4>AI Assistant</h4>
-                        <AISuggestDescription task={task} />
-                        <AISuggestSubtasks task={task} />
-                        <AISmartPriority task={task} />
-                    </div>
                 <div className="detail-section">
                     <input
                         type="text"
@@ -267,43 +261,3 @@ def:pub CommentRow(comment: dict, onDelete: any) -> any {
         </div>;
 }
 
-    # AI Assistant Panel Components
-    def:pub AISuggestDescription(task: dict) -> any {
-        has description: str = "";
-        async def fetchDescription -> None {
-            # Call Jac AI walker for description
-            description = await sv.AIDescribeTask.run(task.title, task.description);
-        }
-        if description == "" {
-            fetchDescription();
-            return <div className="ai-desc-loading">Loading description...</div>;
-        }
-        return <div className="ai-desc">{description}</div>;
-    }
-
-    def:pub AISuggestSubtasks(task: dict) -> any {
-        has subtasks: list = [];
-        async def fetchSubtasks -> None {
-            # Call Jac AI walker for subtasks
-            result = await sv.AISuggestSubtasks.run(task.title, task.description);
-            subtasks = JSON.parse(result);
-        }
-        if subtasks.length == 0 {
-            fetchSubtasks();
-            return <div className="ai-subtasks-loading">Loading subtasks...</div>;
-        }
-        return <ul className="ai-subtasks-list">{[<li>{st}</li> for st in subtasks]}</ul>;
-    }
-
-    def:pub AISmartPriority(task: dict) -> any {
-        has priority: str = "";
-        async def fetchPriority -> None {
-            # Call Jac AI walker for smart priority
-            priority = await sv.AISmartPriority.run(task.title, task.description, task.due_date);
-        }
-        if priority == "" {
-            fetchPriority();
-            return <div className="ai-priority-loading">Loading priority...</div>;
-        }
-        return <div className="ai-priority">Suggested priority: <span className={"priority-badge priority-" + priority}>{priority.toUpperCase()}</span></div>;
-    }

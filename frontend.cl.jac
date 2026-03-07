@@ -62,9 +62,6 @@ def:pub app -> any {
         editEndTime: str = "",
         commentText: str = "",
 
-        # Calendar
-        calendarTasks: list = [],
-
         # Create task modal
         showCreateTask: bool = False,
         showGlobalCreateTask: bool = False,
@@ -99,17 +96,10 @@ def:pub app -> any {
         }
     }
 
-    can with [view] entry {
-        if view == "calendar" {
-            fetchCalendarTasks();
-        }
-    }
-
     # Method declarations (implementations in frontend.impl.jac)
     async def fetchSpaces -> None;
     async def fetchLists -> None;
     async def fetchTasks -> None;
-    async def fetchCalendarTasks -> None;
     async def fetchProfile -> None;
     async def saveProfile(displayName: str, theme: str, defaultView: str) -> None;
     async def toggleTheme -> None;
@@ -238,7 +228,7 @@ def:pub app -> any {
                             ⊞ Board
                         </button>
                         <button
-                            onClick={lambda -> None { view = "calendar"; fetchCalendarTasks(); }}
+                            onClick={lambda -> None { view = "calendar"; }}
                             className={("view-tab active" if view == "calendar" else "view-tab")}
                         >
                             📅 Calendar
@@ -263,7 +253,6 @@ def:pub app -> any {
                         <DashboardView onOpenDetail={openTask} />
                     ) if view == "dashboard" else (
                         <CalendarView
-                            allTasks={calendarTasks}
                             onUpdateTask={updateTask}
                             onOpenDetail={openTask}
                         />
@@ -374,7 +363,7 @@ def:pub app -> any {
             {(
                 <GlobalTaskModal
                     onClose={lambda -> None { showGlobalCreateTask = False; }}
-                    onCreated={lambda -> None { fetchSpaces(); fetchLists(); fetchTasks(); fetchCalendarTasks(); }}
+                    onCreated={lambda -> None { fetchSpaces(); fetchLists(); fetchTasks(); }}
                 />
             ) if showGlobalCreateTask else None}
             {(

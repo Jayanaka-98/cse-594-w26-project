@@ -66,11 +66,6 @@ impl app.fetchTasks -> None {
     tasksLoading = False;
 }
 
-impl app.fetchCalendarTasks -> None {
-    result = root spawn ListTasks(list_id="");
-    calendarTasks = result.reports[0] if result.reports else [];
-}
-
 impl app.createSpace(name: str, color: str) -> None {
     if not name.trim() { return; }
     result = root spawn CreateSpace(name=name, color=color);
@@ -158,7 +153,6 @@ impl app.updateTask(taskId: str, title: str, description: str, status: str, prio
         }
     }
     await fetchTasks();
-    await fetchCalendarTasks();
 }
 
 impl app.updateTaskStatus(taskId: str, status: str) -> None {

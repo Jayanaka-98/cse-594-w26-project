@@ -3,7 +3,6 @@
 sv import from main { ListTasks }
 
 def:pub CalendarView(
-    allTasks: list,
     onUpdateTask: any,
     onOpenDetail: any
 ) -> any {
