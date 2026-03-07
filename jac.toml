@@ -46,3 +46,7 @@ host = "127.0.0.1"
 expose_grammar = true
 enable_validate = true
 
+[jacpack]
+name = "flowboard"
+description = "project for 594"
+jaclang = "0.12.0"
