@@ -59,9 +59,8 @@ impl app.fetchLists -> None {
 }
 
 impl app.fetchTasks -> None {
-    if selectedListId == "" { return; }
     tasksLoading = True;
-    result = root spawn ListTasks(list_id=selectedListId);
+    result = root spawn ListTasks(list_id="");
     tasks = result.reports[0] if result.reports else [];
     tasksLoading = False;
 }

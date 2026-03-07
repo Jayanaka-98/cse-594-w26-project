@@ -14,6 +14,7 @@ import from .components.ProfilePanel { ProfilePanel }
 import from .components.CalendarView { CalendarView }
 import from .components.GlobalTaskModal { GlobalTaskModal }
 import from .components.DashboardView { DashboardView }
+import from .components.AnalyticsView { AnalyticsView }
 
 sv import from main {
     CreateSpace, ListSpaces, DeleteSpace,
@@ -87,11 +88,6 @@ def:pub app -> any {
             fetchProfile();
             fetchSpaces();
             fetchLists();
-        }
-    }
-
-    can with [selectedListId] entry {
-        if selectedListId != "" {
             fetchTasks();
         }
     }
@@ -216,14 +212,12 @@ def:pub app -> any {
                         <button
                             onClick={lambda -> None { view = "list"; }}
                             className={("view-tab active" if view == "list" else "view-tab")}
-                            disabled={selectedListId == ""}
                         >
                             ≡ List
                         </button>
                         <button
                             onClick={lambda -> None { view = "board"; }}
                             className={("view-tab active" if view == "board" else "view-tab")}
-                            disabled={selectedListId == ""}
                         >
                             ⊞ Board
                         </button>
@@ -239,19 +233,19 @@ def:pub app -> any {
                         >
                             📊 Dashboard
                         </button>
-                        {(
-                            <button
-                                onClick={lambda -> None { showCreateTask = True; }}
-                                className="btn-primary btn-sm view-tab-action"
-                            >
-                                + New Task
-                            </button>
-                        ) if selectedListId != "" and view != "calendar" and view != "dashboard" else None}
+                        <button
+                            onClick={lambda -> None { view = "analytics"; }}
+                            className={("view-tab active" if view == "analytics" else "view-tab")}
+                        >
+                            📈 Analytics
+                        </button>
                     </div>
 
                     {(
                         <DashboardView onOpenDetail={openTask} />
                     ) if view == "dashboard" else (
+                        <AnalyticsView tasks={tasks} />
+                    ) if view == "analytics" else (
                         <CalendarView
                             onUpdateTask={updateTask}
                             onOpenDetail={openTask}
@@ -271,18 +265,8 @@ def:pub app -> any {
                                     + Create Space
                                 </button>
                             </div>
-                        ) if selectedListId == "" else (
-                            <div className="content-area">
-                                <div className="content-header">
-                                    <div className="content-header-left">
-                                        <h2 className="list-title">
-                                            {currentList.name if currentList else "Tasks"}
-                                        </h2>
-                                        <span className="task-count">
-                                            {tasks.filter(lambda t: any -> bool { return t.parent_task_id == ""; }).length} tasks
-                                        </span>
-                                    </div>
-                                </div>
+                        ) if spaces.length == 0 else (
+                            <div className="nested-view">
                                 {(
                                     <div className="loading-tasks">
                                         <div className="loading-spinner"></div>
@@ -290,40 +274,77 @@ def:pub app -> any {
                                     </div>
                                 ) if tasksLoading else (
                                     <div>
-                                        {(
-                                            <KanbanBoard
-                                                tasks={tasks.filter(lambda t: any -> bool { return t.parent_task_id == ""; })}
-                                                onOpenDetail={openTask}
-                                                onStatusChange={updateTaskStatus}
-                                                onDelete={deleteTask}
-                                            />
-                                        ) if view == "board" else (
-                                            <div className="task-list">
-                                                {(
-                                                    <div className="empty-tasks">
-                                                        <p className="empty-tasks-text">No tasks yet.</p>
-                                                        <button
-                                                            onClick={lambda -> None { showCreateTask = True; }}
-                                                            className="btn-text"
-                                                        >
-                                                            + Create your first task
-                                                        </button>
-                                                    </div>
-                                                ) if tasks.filter(lambda t: any -> bool { return t.parent_task_id == ""; }).length == 0 else (
-                                                    <div>
-                                                        {[
-                                                            <TaskCard
-                                                                key={task.id}
-                                                                task={task}
-                                                                onOpenDetail={openTask}
-                                                                onStatusChange={updateTaskStatus}
-                                                                onDelete={deleteTask}
-                                                            /> for task in tasks if task.parent_task_id == ""
-                                                        ]}
-                                                    </div>
-                                                )}
+                                        {[
+                                            <div className="space-section" key={space.id}>
+                                                <div className="space-section-header">
+                                                    <div className={"space-dot space-color-" + space.color}></div>
+                                                    <span className="space-section-title">{space.name}</span>
+                                                    <span className="task-count">
+                                                        {lists.filter(lambda l: any -> bool { return l.space_id == space.id; }).length} lists
+                                                    </span>
+                                                    <button
+                                                        onClick={lambda -> None { createListForSpaceId = space.id; showCreateList = True; }}
+                                                        className="btn-text btn-xs space-section-add-list"
+                                                    >
+                                                        + List
+                                                    </button>
+                                                </div>
+                                                <div className="space-section-body">
+                                                    {(
+                                                        <div className="list-empty-state">No lists in this space yet.</div>
+                                                    ) if lists.filter(lambda l: any -> bool { return l.space_id == space.id; }).length == 0 else (
+                                                        <div>
+                                                            {[
+                                                                <div className="list-section" key={lst.id}>
+                                                                    <div className="list-section-header">
+                                                                        <span className="list-section-title">{lst.name}</span>
+                                                                        <span className="task-count">
+                                                                            {tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; }).length} tasks
+                                                                        </span>
+                                                                        <button
+                                                                            onClick={lambda -> None { selectedListId = lst.id; showCreateTask = True; }}
+                                                                            className="btn-text btn-xs"
+                                                                        >
+                                                                            + New Task
+                                                                        </button>
+                                                                    </div>
+                                                                    {(
+                                                                        <div className="nested-board-wrap">
+                                                                            <KanbanBoard
+                                                                                tasks={tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; })}
+                                                                                onOpenDetail={openTask}
+                                                                                onStatusChange={updateTaskStatus}
+                                                                                onDelete={deleteTask}
+                                                                            />
+                                                                        </div>
+                                                                    ) if view == "board" else (
+                                                                        <div className="list-section-tasks">
+                                                                            {(
+                                                                                <div className="list-empty-tasks">No tasks yet.</div>
+                                                                            ) if tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; }).length == 0 else (
+                                                                                <div>
+                                                                                    {[
+                                                                                        <TaskCard
+                                                                                            key={task.id}
+                                                                                            task={task}
+                                                                                            onOpenDetail={openTask}
+                                                                                            onStatusChange={updateTaskStatus}
+                                                                                            onDelete={deleteTask}
+                                                                                        /> for task in tasks if task.list_id == lst.id and task.parent_task_id == ""
+                                                                                    ]}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                for lst in lists if lst.space_id == space.id
+                                                            ]}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
-                                        )}
+                                            for space in spaces
+                                        ]}
                                     </div>
                                 )}
                             </div>
