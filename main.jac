@@ -42,7 +42,10 @@ node Task {
         priority: str = "normal",
         due_date: str = "",
         list_id: str = "",
-        parent_task_id: str = "";
+        parent_task_id: str = "",
+        start_date: str = "",
+        start_time: str = "",
+        end_time: str = "";
 }
 
 node Comment {
@@ -272,7 +275,10 @@ walker:priv CreateTask {
         priority: str = "normal",
         due_date: str = "",
         list_id: str = "",
-        parent_task_id: str = "";
+        parent_task_id: str = "",
+        start_date: str = "",
+        start_time: str = "",
+        end_time: str = "";
 
     can create with Root entry {
         global task_counter;
@@ -286,7 +292,10 @@ walker:priv CreateTask {
             priority=self.priority,
             due_date=self.due_date,
             list_id=self.list_id,
-            parent_task_id=self.parent_task_id
+            parent_task_id=self.parent_task_id,
+            start_date=self.start_date,
+            start_time=self.start_time,
+            end_time=self.end_time
         );
         if new_task {
             report {
@@ -297,7 +306,10 @@ walker:priv CreateTask {
                 "priority": new_task[0].priority,
                 "due_date": new_task[0].due_date,
                 "list_id": new_task[0].list_id,
-                "parent_task_id": new_task[0].parent_task_id
+                "parent_task_id": new_task[0].parent_task_id,
+                "start_date": new_task[0].start_date,
+                "start_time": new_task[0].start_time,
+                "end_time": new_task[0].end_time
             };
         }
     }
@@ -321,7 +333,10 @@ walker:priv ListTasks {
                 "priority": here.priority,
                 "due_date": here.due_date,
                 "list_id": here.list_id,
-                "parent_task_id": here.parent_task_id
+                "parent_task_id": here.parent_task_id,
+                "start_date": here.start_date,
+                "start_time": here.start_time,
+                "end_time": here.end_time
             });
         }
     }
@@ -337,7 +352,10 @@ walker:priv UpdateTask {
         description: str,
         status: str,
         priority: str,
-        due_date: str;
+        due_date: str,
+        start_date: str = "",
+        start_time: str = "",
+        end_time: str = "";
 
     can search with Root entry {
         visit [-->];
@@ -350,6 +368,9 @@ walker:priv UpdateTask {
             here.status = self.status;
             here.priority = self.priority;
             here.due_date = self.due_date;
+            here.start_date = self.start_date;
+            here.start_time = self.start_time;
+            here.end_time = self.end_time;
             report {
                 "id": here.id,
                 "title": here.title,
@@ -358,7 +379,10 @@ walker:priv UpdateTask {
                 "priority": here.priority,
                 "due_date": here.due_date,
                 "list_id": here.list_id,
-                "parent_task_id": here.parent_task_id
+                "parent_task_id": here.parent_task_id,
+                "start_date": here.start_date,
+                "start_time": here.start_time,
+                "end_time": here.end_time
             };
         }
     }

@@ -66,6 +66,11 @@ impl app.fetchTasks -> None {
     tasksLoading = False;
 }
 
+impl app.fetchCalendarTasks -> None {
+    result = root spawn ListTasks(list_id="");
+    calendarTasks = result.reports[0] if result.reports else [];
+}
+
 impl app.createSpace(name: str, color: str) -> None {
     if not name.trim() { return; }
     result = root spawn CreateSpace(name=name, color=color);
@@ -94,7 +99,7 @@ impl app.createList(name: str, spaceId: str) -> None {
     }
 }
 
-impl app.createTask(title: str, description: str, status: str, priority: str, dueDate: str, parentTaskId: str) -> None {
+impl app.createTask(title: str, description: str, status: str, priority: str, dueDate: str, parentTaskId: str, startDate: str, startTime: str, endTime: str) -> None {
     if not title.trim() { return; }
     if selectedListId == "" { return; }
     result = root spawn CreateTask(
@@ -104,7 +109,10 @@ impl app.createTask(title: str, description: str, status: str, priority: str, du
         priority=priority,
         due_date=dueDate,
         list_id=selectedListId,
-        parent_task_id=parentTaskId
+        parent_task_id=parentTaskId,
+        start_date=startDate,
+        start_time=startTime,
+        end_time=endTime
     );
     if result.reports {
         newTask = result.reports[0];
@@ -116,19 +124,25 @@ impl app.createTask(title: str, description: str, status: str, priority: str, du
             "priority": newTask.priority,
             "due_date": newTask.due_date,
             "list_id": newTask.list_id,
-            "parent_task_id": newTask.parent_task_id
+            "parent_task_id": newTask.parent_task_id,
+            "start_date": newTask.start_date,
+            "start_time": newTask.start_time,
+            "end_time": newTask.end_time
         }]);
     }
 }
 
-impl app.updateTask(taskId: str, title: str, description: str, status: str, priority: str, dueDate: str) -> None {
+impl app.updateTask(taskId: str, title: str, description: str, status: str, priority: str, dueDate: str, startDate: str, startTime: str, endTime: str) -> None {
     result = root spawn UpdateTask(
         task_id=taskId,
         title=title,
         description=description,
         status=status,
         priority=priority,
-        due_date=dueDate
+        due_date=dueDate,
+        start_date=startDate,
+        start_time=startTime,
+        end_time=endTime
     );
     if result.reports {
         updatedTask = result.reports[0];
@@ -138,9 +152,13 @@ impl app.updateTask(taskId: str, title: str, description: str, status: str, prio
             editDescription = updatedTask.description;
             editStatus = updatedTask.status;
             editPriority = updatedTask.priority;
+            editStartDate = updatedTask.start_date if updatedTask.start_date else "";
+            editStartTime = updatedTask.start_time if updatedTask.start_time else "";
+            editEndTime = updatedTask.end_time if updatedTask.end_time else "";
         }
     }
     await fetchTasks();
+    await fetchCalendarTasks();
 }
 
 impl app.updateTaskStatus(taskId: str, status: str) -> None {
@@ -153,7 +171,10 @@ impl app.updateTaskStatus(taskId: str, status: str) -> None {
         curr.description,
         status,
         curr.priority,
-        curr.due_date
+        curr.due_date,
+        curr.start_date if curr.start_date else "",
+        curr.start_time if curr.start_time else "",
+        curr.end_time if curr.end_time else ""
     );
 }
 
@@ -296,6 +317,9 @@ impl app.openTask(task: dict) -> None {
     editDescription = task.description;
     editStatus = task.status;
     editPriority = task.priority;
+    editStartDate = task.start_date if task.start_date else "";
+    editStartTime = task.start_time if task.start_time else "";
+    editEndTime = task.end_time if task.end_time else "";
     commentText = "";
     showTaskDetail = True;
     await fetchComments(task.id);
@@ -309,6 +333,9 @@ impl app.closeTask -> None {
     editDescription = "";
     editStatus = "";
     editPriority = "";
+    editStartDate = "";
+    editStartTime = "";
+    editEndTime = "";
     commentText = "";
 }
 
@@ -327,6 +354,9 @@ impl app.saveTaskChanges -> None {
         editDescription,
         editStatus,
         editPriority,
-        ""
+        "",
+        editStartDate,
+        editStartTime,
+        editEndTime
     );
 }

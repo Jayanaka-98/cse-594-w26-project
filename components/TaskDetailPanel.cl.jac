@@ -7,6 +7,9 @@ def:pub TaskDetailPanel(
     editDescription: str,
     editStatus: str,
     editPriority: str,
+    editStartDate: str,
+    editStartTime: str,
+    editEndTime: str,
     commentText: str,
     allTasks: list,
     onClose: any,
@@ -16,6 +19,9 @@ def:pub TaskDetailPanel(
     onEditDescriptionChange: any,
     onEditStatusChange: any,
     onEditPriorityChange: any,
+    onEditStartDateChange: any,
+    onEditStartTimeChange: any,
+    onEditEndTimeChange: any,
     onCommentTextChange: any,
     onAddComment: any,
     onDeleteComment: any,
@@ -94,7 +100,33 @@ def:pub TaskDetailPanel(
                             <option value="low">Low</option>
                         </select>
                     </div>
-                    
+                    <div className="detail-meta-row detail-schedule-row">
+                        <span className="detail-meta-label">Schedule</span>
+                        <div className="detail-schedule-inputs">
+                            <input
+                                type="date"
+                                value={editStartDate}
+                                onChange={onEditStartDateChange}
+                                className="detail-schedule-input"
+                                title="Start date"
+                            />
+                            <input
+                                type="time"
+                                value={editStartTime}
+                                onChange={onEditStartTimeChange}
+                                className="detail-schedule-input"
+                                title="Start time"
+                            />
+                            <span className="detail-schedule-sep">to</span>
+                            <input
+                                type="time"
+                                value={editEndTime}
+                                onChange={onEditEndTimeChange}
+                                className="detail-schedule-input"
+                                title="End time"
+                            />
+                        </div>
+                    </div>
                 </div>
                 <div className="detail-section">
                     <label className="detail-section-label">Description</label>

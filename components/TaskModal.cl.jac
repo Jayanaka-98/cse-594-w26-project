@@ -12,6 +12,9 @@ def:pub TaskModal(
         status: str = "todo",
         priority: str = "normal",
         dueDate: str = "",
+        startDate: str = "",
+        startTime: str = "",
+        endTime: str = "",
         isRecording: bool = False,
         isProcessingAudio: bool = False,
         audioError: str = "",
@@ -20,7 +23,7 @@ def:pub TaskModal(
 
     def handleSubmit -> None {
         if not title.trim() { return; }
-        onCreate(title, description, status, priority, dueDate, "");
+        onCreate(title, description, status, priority, dueDate, "", startDate, startTime, endTime);
         onClose();
     }
 
@@ -181,6 +184,38 @@ def:pub TaskModal(
                             onChange={lambda e: any -> None { dueDate = e.target.value; }}
                             className="form-input"
                         />
+                    </div>
+                    <div className="form-field">
+                        <label className="form-label">Schedule (optional)</label>
+                        <div className="form-row">
+                            <div className="form-field form-field-third">
+                                <label className="form-label-sm">Date</label>
+                                <input
+                                    type="date"
+                                    value={startDate}
+                                    onChange={lambda e: any -> None { startDate = e.target.value; }}
+                                    className="form-input"
+                                />
+                            </div>
+                            <div className="form-field form-field-third">
+                                <label className="form-label-sm">Start Time</label>
+                                <input
+                                    type="time"
+                                    value={startTime}
+                                    onChange={lambda e: any -> None { startTime = e.target.value; }}
+                                    className="form-input"
+                                />
+                            </div>
+                            <div className="form-field form-field-third">
+                                <label className="form-label-sm">End Time</label>
+                                <input
+                                    type="time"
+                                    value={endTime}
+                                    onChange={lambda e: any -> None { endTime = e.target.value; }}
+                                    className="form-input"
+                                />
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div className="modal-footer">
