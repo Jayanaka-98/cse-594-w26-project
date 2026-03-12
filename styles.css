@@ -1677,6 +1677,57 @@ html, body, #root {
 .exp-btn-reject { background: var(--bg-raised); color: var(--text-2); border: 1px solid var(--border); }
 .exp-btn-accept:hover, .exp-btn-modify:hover { opacity: 0.85; }
 
+/* Rejection view */
+.exp-rejection-view {
+    display: flex; flex-direction: column; padding: 0.75rem 1rem 1rem;
+    gap: 0.75rem; flex: 1; overflow-y: auto;
+}
+.exp-rejected-banner {
+    display: flex; align-items: flex-start; gap: 0.6rem;
+    background: #ef44441a; border: 1px solid #ef444466; border-radius: 10px;
+    padding: 0.7rem 0.9rem;
+}
+.exp-rejected-icon { color: #ef4444; flex-shrink: 0; margin-top: 1px; }
+.exp-rejected-title { font-size: 0.875rem; font-weight: 700; color: #f87171; }
+.exp-rejected-sub { font-size: 0.775rem; color: var(--text-3); margin-top: 0.1rem; }
+.exp-alt-prompt { font-size: 0.8rem; color: var(--text-2); margin: 0; }
+.exp-alt-slots { display: flex; flex-direction: column; gap: 0.5rem; }
+.exp-alt-slot {
+    display: flex; align-items: center; gap: 0.75rem;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 0.7rem 0.9rem;
+    cursor: pointer; text-align: left; width: 100%;
+    transition: border-color 0.15s, background 0.15s;
+}
+.exp-alt-slot:hover { border-color: var(--accent); background: var(--accent-bg); }
+.exp-alt-slot-icon { color: var(--text-4); flex-shrink: 0; }
+.exp-alt-slot-info { flex: 1; }
+.exp-alt-slot-date { font-size: 0.85rem; font-weight: 600; color: var(--text-1); margin-bottom: 0.3rem; }
+.exp-alt-slot-bar-wrap { display: flex; align-items: center; gap: 0.5rem; }
+.exp-alt-slot-bar-fill {
+    height: 4px; border-radius: 2px; background: #10b981;
+    max-width: 120px; flex-shrink: 0;
+}
+.exp-alt-slot-pct { font-size: 0.72rem; color: var(--text-4); }
+.exp-keep-original {
+    display: flex; align-items: center; gap: 0.6rem;
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 0.7rem 0.9rem;
+    cursor: pointer; font-size: 0.82rem; color: var(--text-3);
+    width: 100%; text-align: left;
+    transition: background 0.15s;
+}
+.exp-keep-original:hover { background: var(--bg-hover); }
+.exp-keep-icon { font-size: 0.9rem; }
+.exp-back-btn {
+    display: flex; align-items: center; gap: 0.4rem;
+    background: none; border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.45rem 0.9rem;
+    cursor: pointer; font-size: 0.82rem; color: var(--text-3);
+    align-self: flex-start; transition: background 0.15s;
+}
+.exp-back-btn:hover { background: var(--bg-hover); }
+
 /* ============================================================
    OVERRUN ALERT MODAL
    ============================================================ */
@@ -2246,7 +2297,7 @@ html, body, #root {
    Modify Schedule View (msv-*)
    ============================================================ */
 .msv-root {
-    display: flex; flex-direction: column; height: 100%;
+    display: flex; flex-direction: column; flex: 1; min-height: 0;
     background: var(--bg-1);
 }
 .msv-topbar {
@@ -2324,6 +2375,12 @@ html, body, #root {
     background: #22c55e1a; border: 1px solid #22c55e66;
     border-radius: 8px; padding: 0.5rem 0.75rem;
     font-size: 0.775rem; color: #4ade80; margin: 0.5rem;
+}
+.msv-panel-scroll {
+    flex: 1; overflow-y: auto; min-height: 0;
+}
+.msv-panel-inner {
+    flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
 }
 .msv-overview-card {
     background: var(--bg-2); border-radius: 8px; padding: 0.75rem;
