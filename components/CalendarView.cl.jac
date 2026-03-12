@@ -444,9 +444,6 @@ def:pub CalendarView(
                                             <span className="cal-event-time">
                                                 {task.start_time + " – " + (resizeCurrentEndTime if (resizingTaskId == task.id and resizeCurrentEndTime != "") else task.end_time)}
                                             </span>
-                                            {(
-                                                <span className="cal-event-conflict-badge">⚠ overrun conflict</span>
-                                            ) if conflictingIds.includes(task.id) else None}
                                         </div>
                                         <button
                                             className={"cal-event-lock" + (" cal-event-lock-active" if task.is_locked else "")}

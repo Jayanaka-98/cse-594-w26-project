@@ -1,7 +1,7 @@
 """FlowBoard - ClickUp-style Project Management Frontend."""
 
 import from "@jac/runtime" { jacSignup, jacLogin, jacLogout, jacIsLoggedIn }
-import from "lucide-react" { Moon, Sun, List, LayoutGrid, Calendar, BarChart2, TrendingUp, X, AlertTriangle }
+import from "lucide-react" { Moon, Sun, List, LayoutGrid, Calendar, BarChart2, TrendingUp, X, AlertTriangle, GitMerge }
 
 import "./styles.css";
 
@@ -88,7 +88,9 @@ def:pub app -> any {
         conflictsActive: bool = False,
         conflictInfo: dict = {},
         showConflictModal: bool = False,
-        overrunRatios: dict = {};
+        overrunRatios: dict = {},
+        aiPlan: any = None,
+        aiPlanLoading: bool = False;
 
     can with entry {
         isLoggedIn = jacIsLoggedIn();
@@ -273,21 +275,8 @@ def:pub app -> any {
                                 Dismiss
                             </button>
                         </div>
-                    ) if conflictsActive and view != "modify_schedule" else None}
-                    {(
-                        <ModifyScheduleView
-                            tasks={tasks}
-                            conflictInfo={conflictInfo}
-                            onBack={lambda -> None { view = "list"; }}
-                            onSaved={lambda -> None {
-                                view = "list";
-                                conflictsActive = False;
-                                conflictInfo = {};
-                                fetchTasks();
-                            }}
-                        />
-                    ) if view == "modify_schedule" else None}
-                    <div className={"view-tab-bar" + (" d-none" if view == "modify_schedule" else "")}>
+                    ) if conflictsActive and view != "replanning" else None}
+                    <div className="view-tab-bar">
                         <button
                             onClick={lambda -> None { view = "list"; }}
                             className={("view-tab active" if view == "list" else "view-tab")}
@@ -318,9 +307,29 @@ def:pub app -> any {
                         >
                             <TrendingUp size={14} /> Analytics
                         </button>
+                        <button
+                            onClick={lambda -> None { view = "replanning"; }}
+                            className={("view-tab active" if view == "replanning" else "view-tab")}
+                        >
+                            <GitMerge size={14} /> Replanning
+                        </button>
                     </div>
 
                     {(
+                        <ModifyScheduleView
+                            tasks={tasks}
+                            conflictInfo={conflictInfo}
+                            aiPlan={aiPlan}
+                            aiPlanLoading={aiPlanLoading}
+                            onBack={lambda -> None { view = "calendar"; }}
+                            onSaved={lambda -> None {
+                                conflictsActive = False;
+                                conflictInfo = {};
+                                aiPlan = None;
+                                fetchTasks();
+                            }}
+                        />
+                    ) if view == "replanning" else (
                         <DashboardView onOpenDetail={openTask} />
                     ) if view == "dashboard" else (
                         <AnalyticsView tasks={tasks} />
@@ -330,8 +339,6 @@ def:pub app -> any {
                             onOpenDetail={openTask}
                         />
                     ) if view == "calendar" else (
-                        None
-                    ) if view == "modify_schedule" else (
                         (
                             <div className="empty-state">
                                 <div className="empty-state-icon">⚡</div>
@@ -528,7 +535,7 @@ def:pub app -> any {
                 <ConflictAlertModal
                     conflictInfo={conflictInfo}
                     onIgnore={lambda -> None { showConflictModal = False; }}
-                    onViewPlan={lambda -> None { showConflictModal = False; view = "modify_schedule"; }}
+                    onViewPlan={lambda -> None { showConflictModal = False; view = "replanning"; }}
                 />
             ) if showConflictModal else None}
         </div>;

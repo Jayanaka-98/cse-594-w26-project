@@ -1,34 +1,27 @@
 """Modify Schedule — 3-panel AI conflict resolution view."""
 
-sv import from main { AIOptimizeSchedule, ApplyReplanChanges }
+sv import from main { ApplyReplanChanges }
 import from "lucide-react" { ArrowLeft, AlertTriangle, CheckCircle, GripVertical, Clock, Check }
 
 def:pub ModifyScheduleView(
     tasks: list,
     conflictInfo: dict,
+    aiPlan: any,
+    aiPlanLoading: bool,
     onBack: any,
     onSaved: any
 ) -> any {
-    has loading: bool = True,
-        optimization: any = None,
+    has optimization: any = None,
         suggestedTasks: list = [],
         dragIndex: int = -1,
         saving: bool = False,
         saved: bool = False;
 
-    can with entry {
-        fetchOptimization();
-    }
-
-    async def fetchOptimization -> None {
-        loading = True;
-        conflictingIds = conflictInfo.conflicting_ids if conflictInfo.conflicting_ids else [];
-        result = root spawn AIOptimizeSchedule(conflicting_task_ids=conflictingIds);
-        if result.reports {
-            optimization = result.reports[0];
-            suggestedTasks = buildSuggestedList(optimization.changes);
+    can with [aiPlan] entry {
+        if aiPlan and not optimization {
+            optimization = aiPlan;
+            suggestedTasks = buildSuggestedList(aiPlan.changes);
         }
-        loading = False;
     }
 
     def buildSuggestedList(changes: list) -> list {
@@ -56,7 +49,7 @@ def:pub ModifyScheduleView(
             }
         }
         for t in tasks {
-            if t.start_date != "" and t.start_time != "" and t.status != "done" and not changedIds.includes(t.id) {
+            if t and t.start_date and t.start_date != "" and t.start_time and t.start_time != "" and t.status != "done" and not changedIds.includes(t.id) {
                 suggested.append({
                     "id": t.id,
                     "title": t.title,
@@ -71,11 +64,11 @@ def:pub ModifyScheduleView(
                 });
             }
         }
-        return suggested.sort(lambda a: any, b: any -> int {
-            ka = a.start_date + "T" + a.start_time;
-            kb = b.start_date + "T" + b.start_time;
-            return 0 if ka == kb else (-1 if ka < kb else 1);
-        });
+        def sortKey(t: any) -> str {
+            return (t.start_date if t and t.start_date else "") + "T" + (t.start_time if t and t.start_time else "");
+        }
+        result: list = sorted(suggested, key=sortKey);
+        return result;
     }
 
     def formatTime(t: str) -> str {
@@ -201,8 +194,8 @@ def:pub ModifyScheduleView(
                             <div className="loading-spinner"></div>
                             <span>Generating AI schedule...</span>
                         </div>
-                    ) if loading else (
-                        <div>
+                    ) if aiPlanLoading else (
+                        <div className="msv-panel-inner">
                             <div className="msv-task-list">
                                 {[
                                     <div
@@ -253,7 +246,7 @@ def:pub ModifyScheduleView(
                         <span className="msv-panel-title">Why This Schedule?</span>
                     </div>
                     {(
-                        <div>
+                        <div className="msv-panel-scroll">
                             <div className="msv-overview-card">
                                 <div className="msv-overview-label">Schedule Overview</div>
                                 <p className="msv-overview-text">
@@ -276,7 +269,7 @@ def:pub ModifyScheduleView(
                                 </div>
                             ) if optimization and optimization.optimizations and len(optimization.optimizations) > 0 else None}
                         </div>
-                    ) if not loading else (
+                    ) if not aiPlanLoading else (
                         <div className="msv-loading">
                             <div className="loading-spinner"></div>
                         </div>
@@ -296,9 +289,9 @@ def:pub ModifyScheduleView(
                     <button
                         className="msv-btn-save"
                         onClick={lambda -> None { handleSave(); }}
-                        disabled={saving or loading}
+                        disabled={saving or aiPlanLoading}
                     >
-                        {(<div className="loading-spinner loading-spinner-sm"></div>) if saving else (<Check size={14} />)}
+                        {(<div className="loading-spinner aiPlanLoading-spinner-sm"></div>) if saving else (<Check size={14} />)}
                         Save Changes
                     </button>
                 </div>

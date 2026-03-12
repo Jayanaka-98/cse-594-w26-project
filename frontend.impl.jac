@@ -74,8 +74,16 @@ impl app.fetchTasks -> None {
     info = computeConflicts(tasks, ratios);
     conflictInfo = info;
     conflictsActive = info.tasks_affected > 0;
-    if conflictsActive and not showConflictModal and view != "modify_schedule" {
-        showConflictModal = True;
+    if info.tasks_affected > 0 {
+        if not showConflictModal and view != "replanning" {
+            showConflictModal = True;
+        }
+        aiPlanLoading = True;
+        planResult = root spawn AIOptimizeSchedule(conflicting_task_ids=info.conflicting_ids);
+        aiPlan = planResult.reports[0] if planResult.reports else None;
+        aiPlanLoading = False;
+    } else {
+        aiPlan = None;
     }
 }
 

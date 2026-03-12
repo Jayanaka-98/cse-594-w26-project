@@ -18,6 +18,9 @@ def:pub ProfilePanel(
         overruns: dict = {},
         activeTab: str = "account";
 
+    avatarLabel = displayName if displayName != "" else username;
+    avatarInitial = avatarLabel[0].toUpperCase() if avatarLabel != "" else "?";
+
     can with entry {
         fetchPatterns();
     }

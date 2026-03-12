@@ -6,7 +6,7 @@ Combines server-side endpoints with client-side UI.
 import from byllm.lib { Model }
 import from datetime { datetime }
 
-glob llm = Model(model_name="claude-haiku-4-5-20251001");
+glob llm = Model(model_name="gpt-4o-mini");
 
 # Client-side UI
 cl {
