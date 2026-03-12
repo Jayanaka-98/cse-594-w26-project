@@ -1,5 +1,7 @@
 """Task detail panel - right side panel showing full task details."""
 
+import from "lucide-react" { X, Trash2 }
+
 def:pub TaskDetailPanel(
     task: dict,
     comments: list,
@@ -50,10 +52,10 @@ def:pub TaskDetailPanel(
                 <h3 className="detail-panel-task-id">Task</h3>
                 <div className="detail-panel-actions">
                     <button onClick={onDelete} className="btn-danger-sm" title="Delete task">
-                        🗑
+                        <Trash2 size={14} />
                     </button>
                     <button onClick={onClose} className="btn-close" title="Close">
-                        ×
+                        <X size={16} />
                     </button>
                 </div>
             </div>
@@ -256,7 +258,7 @@ def:pub CommentRow(comment: dict, onDelete: any) -> any {
                 className="comment-delete-btn"
                 title="Delete comment"
             >
-                ×
+                <X size={13} />
             </button>
         </div>;
 }

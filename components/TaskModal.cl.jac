@@ -1,6 +1,7 @@
-"""Task creation modal component with audio mode."""
+"""Task creation modal component with audio mode and AI duration estimation."""
 
-sv import from main { AIExtractTaskFromTranscript }
+sv import from main { AIExtractTaskFromTranscript, AIEstimateDuration }
+import from "lucide-react" { Mic, Square, X }
 
 def:pub TaskModal(
     listId: str,
@@ -15,6 +16,12 @@ def:pub TaskModal(
         startDate: str = "",
         startTime: str = "",
         endTime: str = "",
+        category: str = "",
+        estimatedDuration: int = 60,
+        aiSuggestedMinutes: int = 0,
+        aiSuggestedRationale: str = "",
+        aiSuggestedConfidence: int = 0,
+        isEstimating: bool = False,
         isRecording: bool = False,
         isProcessingAudio: bool = False,
         audioError: str = "",
@@ -23,8 +30,21 @@ def:pub TaskModal(
 
     def handleSubmit -> None {
         if not title.trim() { return; }
-        onCreate(title, description, status, priority, dueDate, "", startDate, startTime, endTime);
+        onCreate(title, description, status, priority, dueDate, "", startDate, startTime, endTime, category, estimatedDuration);
         onClose();
+    }
+
+    async def fetchAIDuration -> None {
+        if not title.trim() or category == "" { return; }
+        isEstimating = True;
+        result = root spawn AIEstimateDuration(task_title=title, category=category);
+        if result.reports {
+            d = result.reports[0];
+            aiSuggestedMinutes = d.suggested_minutes;
+            aiSuggestedRationale = d.rationale;
+            aiSuggestedConfidence = d.confidence_pct;
+        }
+        isEstimating = False;
     }
 
     def handleKeyPress(e: any) -> None {
@@ -84,7 +104,7 @@ def:pub TaskModal(
             <div className="modal-box modal-task" onClick={lambda e: any -> None { e.stopPropagation(); }}>
                 <div className="modal-header">
                     <h3 className="modal-title">New Task</h3>
-                    <button onClick={onClose} className="btn-close">×</button>
+                    <button onClick={onClose} className="btn-close"><X size={16} /></button>
                 </div>
                 <div className="modal-body">
                     <div className="form-field">
@@ -105,7 +125,7 @@ def:pub TaskModal(
                                     title="Stop recording"
                                     disabled={isProcessingAudio}
                                 >
-                                    ⏹
+                                    <Square size={14} />
                                 </button>
                             ) if isRecording else (
                                 <button
@@ -114,14 +134,14 @@ def:pub TaskModal(
                                     title="Dictate task via voice"
                                     disabled={isProcessingAudio}
                                 >
-                                    🎤
+                                    <Mic size={14} />
                                 </button>
                             )}
                         </div>
                         {(
                             <div className="audio-status">
                                 {(
-                                    <span className="audio-status-recording">🔴 Listening...</span>
+                                    <span className="audio-status-recording"><span className="audio-rec-dot"></span> Listening...</span>
                                 ) if isRecording else (
                                     <span className="audio-status-processing">
                                         <span className="audio-spinner"></span>
@@ -147,6 +167,50 @@ def:pub TaskModal(
                             className="form-textarea"
                             rows={3}
                         />
+                    </div>
+                    <div className="form-row">
+                        <div className="form-field form-field-half">
+                            <label className="form-label">Category</label>
+                            <select
+                                value={category}
+                                onChange={lambda e: any -> None { category = e.target.value; }}
+                                onBlur={lambda -> None { fetchAIDuration(); }}
+                                className="form-select"
+                            >
+                                <option value="">— select —</option>
+                                <option value="Research">Research</option>
+                                <option value="Coding">Coding</option>
+                                <option value="Meeting">Meeting</option>
+                                <option value="Writing">Writing</option>
+                                <option value="Admin">Admin</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <div className="form-field form-field-half">
+                            <label className="form-label">Est. Duration (min)</label>
+                            <input
+                                type="number"
+                                value={estimatedDuration}
+                                onChange={lambda e: any -> None { estimatedDuration = parseInt(e.target.value) if e.target.value else 0; }}
+                                className="form-input"
+                                min={1}
+                            />
+                            {(
+                                <div className="ai-duration-suggestion">
+                                    {(
+                                        <span className="ai-duration-loading">AI estimating...</span>
+                                    ) if isEstimating else (
+                                        <span
+                                            className="ai-duration-badge"
+                                            title={aiSuggestedRationale}
+                                            onClick={lambda -> None { estimatedDuration = aiSuggestedMinutes; }}
+                                        >
+                                            AI suggests: {aiSuggestedMinutes.toString()} min ({aiSuggestedConfidence.toString()}% conf) — click to use
+                                        </span>
+                                    )}
+                                </div>
+                            ) if isEstimating or aiSuggestedMinutes > 0 else None}
+                        </div>
                     </div>
                     <div className="form-row">
                         <div className="form-field form-field-half">

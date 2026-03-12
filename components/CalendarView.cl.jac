@@ -1,6 +1,8 @@
 """Calendar view with week grid, unscheduled sidebar, drag-and-drop scheduling, and resize."""
 
-sv import from main { ListTasks }
+sv import from main { ListTasks, UpdateTaskLock, AIReplanSchedule, ApplyReplanChanges }
+import from .ExplanationPanel { ExplanationPanel }
+import from "lucide-react" { Lock, LockOpen, AlertTriangle, ChevronLeft, ChevronRight }
 
 def:pub CalendarView(
     onUpdateTask: any,
@@ -14,7 +16,14 @@ def:pub CalendarView(
         resizingTaskId: str = "",
         resizeStartY: int = 0,
         resizeOriginalEnd: str = "",
-        resizeCurrentEndTime: str = "";
+        resizeCurrentEndTime: str = "",
+        explanationTaskId: str = "",
+        explanationPinned: bool = False,
+        explanationCache: dict = {},
+        hoverTimerId: int = 0,
+        conflictingIds: list = [],
+        replanBannerChanges: list = [],
+        replanBannerExplanation: str = "";
 
     can with entry {
         fetchTasks();
@@ -27,7 +36,35 @@ def:pub CalendarView(
 
     async def fetchTasks -> None {
         result = root spawn ListTasks(list_id="");
-        internalTasks = result.reports[0] if result.reports else [];
+        loaded = result.reports[0] if result.reports else [];
+        internalTasks = loaded;
+        conflictingIds = computeLocalConflicts(loaded);
+    }
+
+    def computeLocalConflicts(taskList: list) -> list {
+        defaultRatios = {"Coding": 1.42, "Research": 1.35, "Writing": 1.22, "Meeting": 1.08, "Admin": 1.05};
+        scheduled = taskList.filter(lambda t: any -> bool {
+            return t.start_date != "" and t.start_time != "" and t.status != "done";
+        });
+        ids = [];
+        scheduled.forEach(lambda a: any -> None {
+            scheduled.forEach(lambda b: any -> None {
+                if a.id == b.id { return; }
+                if a.start_date != b.start_date { return; }
+                aStart = parseInt(a.start_time.split(":")[0]) * 60 + parseInt(a.start_time.split(":")[1]);
+                aDur = a.estimated_duration if a.estimated_duration else 60;
+                aRatio = defaultRatios[a.category] if (a.category and defaultRatios[a.category]) else 1.1;
+                aEnd = aStart + Math.ceil(aDur * aRatio);
+                bStart = parseInt(b.start_time.split(":")[0]) * 60 + parseInt(b.start_time.split(":")[1]);
+                bDur = b.estimated_duration if b.estimated_duration else 60;
+                bRatio = defaultRatios[b.category] if (b.category and defaultRatios[b.category]) else 1.1;
+                bEnd = bStart + Math.ceil(bDur * bRatio);
+                if aStart < bEnd and bStart < aEnd {
+                    if not ids.includes(a.id) { ids.push(a.id); }
+                }
+            });
+        });
+        return ids;
     }
 
     def scrollToNow -> None {
@@ -130,9 +167,18 @@ def:pub CalendarView(
         endM = endTotalMins % 60;
         st = startH.toString().padStart(2, "0") + ":" + startM.toString().padStart(2, "0");
         et = endH.toString().padStart(2, "0") + ":" + endM.toString().padStart(2, "0");
+        droppedTaskId = draggingTaskId;
         draggingTaskId = "";
         await onUpdateTask(task.id, task.title, task.description, task.status, task.priority, task.due_date, dateStr, st, et);
         await fetchTasks();
+        replanResult = root spawn AIReplanSchedule(new_task_id=droppedTaskId);
+        if replanResult.reports {
+            proposal = replanResult.reports[0];
+            if proposal.has_conflict {
+                replanBannerChanges = proposal.changes;
+                replanBannerExplanation = proposal.explanation;
+            }
+        }
     }
 
     def startResize(e: any, task: any) -> None {
@@ -182,8 +228,49 @@ def:pub CalendarView(
         return "cal-event-low";
     }
 
+    def getConfidenceClass(task: any) -> str {
+        if task.ai_confidence >= 80 { return " cal-event-confident"; }
+        if task.ai_confidence > 0 and task.ai_confidence < 60 { return " cal-event-uncertain"; }
+        return "";
+    }
+
+    def handleTaskHover(task: any) -> None {
+        if hoverTimerId != 0 { clearTimeout(hoverTimerId); }
+        hoverTimerId = setTimeout(lambda -> None {
+            if not explanationPinned { explanationTaskId = task.id; }
+            hoverTimerId = 0;
+        }, 400);
+    }
+
+    def handleTaskLeave -> None {
+        if hoverTimerId != 0 { clearTimeout(hoverTimerId); hoverTimerId = 0; }
+        # Panel stays visible after hover — user can move cursor to it and click buttons
+        # Only explicit close/accept/reject hides it
+    }
+
+    def handleTaskClick(task: any) -> None {
+        explanationTaskId = task.id;
+        explanationPinned = True;
+    }
+
+    async def toggleLock(e: any, task: any) -> None {
+        e.stopPropagation();
+        root spawn UpdateTaskLock(task_id=task.id, is_locked=(not task.is_locked));
+        await fetchTasks();
+    }
+
+    async def acceptReplan -> None {
+        root spawn ApplyReplanChanges(changes=replanBannerChanges);
+        replanBannerChanges = [];
+        replanBannerExplanation = "";
+        await fetchTasks();
+    }
+
     hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
     unscheduled = getUnscheduledTasks();
+
+    explanationTaskMatches = internalTasks.filter(lambda t: any -> bool { return t.id == explanationTaskId; });
+    explanationTask = explanationTaskMatches[0] if explanationTaskMatches.length > 0 else None;
 
     return
         <div className="cal-container">
@@ -194,6 +281,32 @@ def:pub CalendarView(
                     onMouseUp={handleResizeEnd}
                 />
             ) if resizingTaskId != "" else None}
+
+            {(
+                <div className="cal-replan-banner">
+                    <AlertTriangle size={16} className="cal-replan-icon" />
+                    <span className="cal-replan-text">{replanBannerExplanation}</span>
+                    <button className="cal-replan-accept" onClick={lambda -> None { acceptReplan(); }}>
+                        Accept Changes
+                    </button>
+                    <button className="cal-replan-dismiss" onClick={lambda -> None { replanBannerChanges = []; replanBannerExplanation = ""; }}>
+                        Dismiss
+                    </button>
+                </div>
+            ) if replanBannerChanges.length > 0 else None}
+
+            {(
+                <ExplanationPanel
+                    key={explanationTaskId}
+                    task={explanationTask}
+                    cachedData={explanationCache[explanationTaskId] if explanationCache[explanationTaskId] else None}
+                    onCached={lambda data: any -> None { explanationCache[explanationTaskId] = data; }}
+                    onClose={lambda -> None { explanationTaskId = ""; explanationPinned = False; }}
+                    onAccept={lambda -> None { explanationTaskId = ""; explanationPinned = False; }}
+                    onModify={lambda -> None { onOpenDetail(explanationTask); explanationTaskId = ""; explanationPinned = False; }}
+                    onReject={lambda -> None { explanationTaskId = ""; explanationPinned = False; }}
+                />
+            ) if explanationTask != None else None}
 
             <div className="cal-sidebar">
                 <div className="cal-sidebar-header">
@@ -239,7 +352,7 @@ def:pub CalendarView(
                         onClick={lambda -> None { weekOffset = weekOffset - 1; }}
                         title="Previous week"
                     >
-                        ‹
+                        <ChevronLeft size={18} />
                     </button>
                     <span className="cal-nav-label">{formatWeekLabel()}</span>
                     <button
@@ -247,7 +360,7 @@ def:pub CalendarView(
                         onClick={lambda -> None { weekOffset = weekOffset + 1; }}
                         title="Next week"
                     >
-                        ›
+                        <ChevronRight size={18} />
                     </button>
                     <button
                         className="cal-nav-today"
@@ -309,26 +422,39 @@ def:pub CalendarView(
                                 {[
                                     <div
                                         key={task.id}
-                                        className={"cal-event " + getPriorityClass(task.priority)}
+                                        className={"cal-event " + getPriorityClass(task.priority) + getConfidenceClass(task) + ((" cal-event-locked") if task.is_locked else "") + ((" cal-event-conflict") if conflictingIds.includes(task.id) else "")}
                                         style={{
                                             top: getTaskTop(task),
                                             height: getTaskHeight(task)
                                         }}
-                                        draggable={True}
+                                        draggable={(not task.is_locked)}
+                                        onMouseEnter={lambda e: any -> None { handleTaskHover(task); }}
+                                        onMouseLeave={lambda -> None { handleTaskLeave(); }}
                                         onDragStart={lambda e: any -> None {
+                                            if task.is_locked { return; }
                                             draggingTaskId = task.id;
                                             draggingFromCalendar = True;
                                             e.dataTransfer.effectAllowed = "move";
                                             e.dataTransfer.setData("text/plain", task.id);
                                         }}
-                                        onClick={lambda -> None { onOpenDetail(task); }}
+                                        onClick={lambda -> None { handleTaskClick(task); }}
                                     >
                                         <div className="cal-event-body">
                                             <span className="cal-event-title">{task.title}</span>
                                             <span className="cal-event-time">
                                                 {task.start_time + " – " + (resizeCurrentEndTime if (resizingTaskId == task.id and resizeCurrentEndTime != "") else task.end_time)}
                                             </span>
+                                            {(
+                                                <span className="cal-event-conflict-badge">⚠ overrun conflict</span>
+                                            ) if conflictingIds.includes(task.id) else None}
                                         </div>
+                                        <button
+                                            className={"cal-event-lock" + (" cal-event-lock-active" if task.is_locked else "")}
+                                            onClick={lambda e: any -> None { toggleLock(e, task); }}
+                                            title={("Unlock" if task.is_locked else "Lock position")}
+                                        >
+                                            {(<Lock size={11} />) if task.is_locked else (<LockOpen size={11} />)}
+                                        </button>
                                         <div
                                             className="cal-event-resize-handle"
                                             onMouseDown={lambda e: any -> None { startResize(e, task); }}

@@ -1,6 +1,6 @@
 """Task card component for list and board views."""
 
- 
+import from "lucide-react" { X }
 
 def:pub TaskCard(
     task: dict,
@@ -41,7 +41,7 @@ def:pub TaskCard(
                             className="task-delete-btn"
                             title="Delete task"
                         >
-                            ×
+                            <X size={14} />
                         </button>
                     </div>
                     {(

@@ -15,6 +15,7 @@ postcss = "^8.4.0"
 sonner = "^1.7.0"
 date-fns = "^3.6.0"
 recharts = "^2.12.0"
+lucide-react = "latest"
 
 [dependencies.npm.dev]
 "@jac-client/dev-deps" = "1.0.0"
@@ -25,9 +26,6 @@ watchdog = ">=3.0.0"
 [serve]
 base_route_app = "app"
 
-[plugins]
-[plugins.client]
-[plugins.client.configs]
 [plugins.client.configs.postcss]
 plugins = ["tailwindcss", "autoprefixer"]
 
@@ -35,10 +33,9 @@ plugins = ["tailwindcss", "autoprefixer"]
 content = ["./**/*.jac", "./**/*.cl.jac", "./.jac/client/**/*.{js,jsx,ts,tsx}"]
 plugins = []
 
-[plugins.client.configs.tailwind.theme]
-[plugins.client.configs.tailwind.theme.extend]
 [plugins.client.configs.tailwind.theme.extend.fontFamily]
 sans = ["Inter", "system-ui", "-apple-system", "sans-serif"]
+
 [plugins.mcp]
 transport = "stdio"
 port = 3001

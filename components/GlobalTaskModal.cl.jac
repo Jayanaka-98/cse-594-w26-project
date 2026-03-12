@@ -1,6 +1,7 @@
 """Global task creation modal with inline space and list selection/creation."""
 
-sv import from main { ListSpaces, ListLists, CreateSpace, CreateList, CreateTask, AIExtractTaskFromTranscript }
+sv import from main { ListSpaces, ListLists, CreateSpace, CreateList, CreateTask, AIExtractTaskFromTranscript, AIEstimateDuration }
+import from "lucide-react" { Mic, Square, X }
 
 def:pub GlobalTaskModal(
     onClose: any,
@@ -26,6 +27,12 @@ def:pub GlobalTaskModal(
         startDate: str = "",
         startTime: str = "",
         endTime: str = "",
+        category: str = "",
+        estimatedDuration: int = 60,
+        aiSuggestedMinutes: int = 0,
+        aiSuggestedRationale: str = "",
+        aiSuggestedConfidence: int = 0,
+        isEstimating: bool = False,
 
         isRecording: bool = False,
         isProcessingAudio: bool = False,
@@ -99,10 +106,25 @@ def:pub GlobalTaskModal(
             parent_task_id="",
             start_date=startDate,
             start_time=startTime,
-            end_time=endTime
+            end_time=endTime,
+            category=category,
+            estimated_duration=estimatedDuration
         );
         onCreated();
         onClose();
+    }
+
+    async def fetchAIDuration -> None {
+        if not title.trim() or category == "" { return; }
+        isEstimating = True;
+        result = root spawn AIEstimateDuration(task_title=title, category=category);
+        if result.reports {
+            d = result.reports[0];
+            aiSuggestedMinutes = d.suggested_minutes;
+            aiSuggestedRationale = d.rationale;
+            aiSuggestedConfidence = d.confidence_pct;
+        }
+        isEstimating = False;
     }
 
     async def processTranscript(transcript: str) -> None {
@@ -164,7 +186,7 @@ def:pub GlobalTaskModal(
             <div className="modal-box modal-global-task" onClick={lambda e: any -> None { e.stopPropagation(); }}>
                 <div className="modal-header">
                     <h3 className="modal-title">New Task</h3>
-                    <button onClick={onClose} className="btn-close">×</button>
+                    <button onClick={onClose} className="btn-close"><X size={16} /></button>
                 </div>
                 <div className="modal-body">
 
@@ -309,7 +331,7 @@ def:pub GlobalTaskModal(
                                     title="Stop recording"
                                     disabled={isProcessingAudio}
                                 >
-                                    ⏹
+                                    <Square size={14} />
                                 </button>
                             ) if isRecording else (
                                 <button
@@ -318,14 +340,14 @@ def:pub GlobalTaskModal(
                                     title="Dictate task via voice"
                                     disabled={isProcessingAudio}
                                 >
-                                    🎤
+                                    <Mic size={14} />
                                 </button>
                             )}
                         </div>
                         {(
                             <div className="audio-status">
                                 {(
-                                    <span className="audio-status-recording">🔴 Listening...</span>
+                                    <span className="audio-status-recording"><span className="audio-rec-dot"></span> Listening...</span>
                                 ) if isRecording else (
                                     <span className="audio-status-processing">
                                         <span className="audio-spinner"></span>
@@ -354,6 +376,50 @@ def:pub GlobalTaskModal(
                         />
                     </div>
 
+                    <div className="form-row">
+                        <div className="form-field form-field-half">
+                            <label className="form-label">Category</label>
+                            <select
+                                value={category}
+                                onChange={lambda e: any -> None { category = e.target.value; }}
+                                onBlur={lambda -> None { fetchAIDuration(); }}
+                                className="form-select"
+                            >
+                                <option value="">— select —</option>
+                                <option value="Research">Research</option>
+                                <option value="Coding">Coding</option>
+                                <option value="Meeting">Meeting</option>
+                                <option value="Writing">Writing</option>
+                                <option value="Admin">Admin</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <div className="form-field form-field-half">
+                            <label className="form-label">Est. Duration (min)</label>
+                            <input
+                                type="number"
+                                value={estimatedDuration}
+                                onChange={lambda e: any -> None { estimatedDuration = parseInt(e.target.value) if e.target.value else 0; }}
+                                className="form-input"
+                                min={1}
+                            />
+                            {(
+                                <div className="ai-duration-suggestion">
+                                    {(
+                                        <span className="ai-duration-loading">AI estimating...</span>
+                                    ) if isEstimating else (
+                                        <span
+                                            className="ai-duration-badge"
+                                            title={aiSuggestedRationale}
+                                            onClick={lambda -> None { estimatedDuration = aiSuggestedMinutes; }}
+                                        >
+                                            AI suggests: {aiSuggestedMinutes.toString()} min ({aiSuggestedConfidence.toString()}% conf) — click to use
+                                        </span>
+                                    )}
+                                </div>
+                            ) if isEstimating or aiSuggestedMinutes > 0 else None}
+                        </div>
+                    </div>
                     <div className="form-row">
                         <div className="form-field form-field-half">
                             <label className="form-label">Status</label>

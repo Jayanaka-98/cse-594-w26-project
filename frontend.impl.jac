@@ -50,6 +50,11 @@ impl app.fetchSpaces -> None {
     spacesLoading = True;
     result = root spawn ListSpaces();
     spaces = result.reports[0] if result.reports else [];
+    if spaces.length == 0 and loggedInUsername == "dummy" {
+        root spawn SeedDemoData();
+        result2 = root spawn ListSpaces();
+        spaces = result2.reports[0] if result2.reports else [];
+    }
     spacesLoading = False;
 }
 
@@ -63,6 +68,15 @@ impl app.fetchTasks -> None {
     result = root spawn ListTasks(list_id="");
     tasks = result.reports[0] if result.reports else [];
     tasksLoading = False;
+    pResult = root spawn GetUserPatterns();
+    ratios = pResult.reports[0].category_overrun_ratios if pResult.reports else {};
+    overrunRatios = ratios;
+    info = computeConflicts(tasks, ratios);
+    conflictInfo = info;
+    conflictsActive = info.tasks_affected > 0;
+    if conflictsActive and not showConflictModal and view != "modify_schedule" {
+        showConflictModal = True;
+    }
 }
 
 impl app.createSpace(name: str, color: str) -> None {
@@ -93,7 +107,7 @@ impl app.createList(name: str, spaceId: str) -> None {
     }
 }
 
-impl app.createTask(title: str, description: str, status: str, priority: str, dueDate: str, parentTaskId: str, startDate: str, startTime: str, endTime: str) -> None {
+impl app.createTask(title: str, description: str, status: str, priority: str, dueDate: str, parentTaskId: str, startDate: str, startTime: str, endTime: str, category: str, estimatedDuration: int) -> None {
     if not title.trim() { return; }
     if selectedListId == "" { return; }
     result = root spawn CreateTask(
@@ -106,7 +120,9 @@ impl app.createTask(title: str, description: str, status: str, priority: str, du
         parent_task_id=parentTaskId,
         start_date=startDate,
         start_time=startTime,
-        end_time=endTime
+        end_time=endTime,
+        category=category,
+        estimated_duration=estimatedDuration
     );
     if result.reports {
         newTask = result.reports[0];
@@ -121,7 +137,9 @@ impl app.createTask(title: str, description: str, status: str, priority: str, du
             "parent_task_id": newTask.parent_task_id,
             "start_date": newTask.start_date,
             "start_time": newTask.start_time,
-            "end_time": newTask.end_time
+            "end_time": newTask.end_time,
+            "category": newTask.category,
+            "estimated_duration": newTask.estimated_duration
         }]);
     }
 }

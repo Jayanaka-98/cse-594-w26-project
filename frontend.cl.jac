@@ -1,6 +1,7 @@
 """FlowBoard - ClickUp-style Project Management Frontend."""
 
 import from "@jac/runtime" { jacSignup, jacLogin, jacLogout, jacIsLoggedIn }
+import from "lucide-react" { Moon, Sun, List, LayoutGrid, Calendar, BarChart2, TrendingUp, X, AlertTriangle }
 
 import "./styles.css";
 
@@ -15,13 +16,18 @@ import from .components.CalendarView { CalendarView }
 import from .components.GlobalTaskModal { GlobalTaskModal }
 import from .components.DashboardView { DashboardView }
 import from .components.AnalyticsView { AnalyticsView }
+import from .components.ConflictAlertModal { ConflictAlertModal }
+import from .components.ModifyScheduleView { ModifyScheduleView }
 
 sv import from main {
     CreateSpace, ListSpaces, DeleteSpace,
     CreateList, ListLists, DeleteList,
     CreateTask, ListTasks, UpdateTask, DeleteTask,
     AddComment, ListComments, DeleteComment,
-    GetUserProfile, UpdateUserProfile
+    GetUserProfile, UpdateUserProfile,
+    SeedDemoData, ListTaskHistory,
+    GetUserPatterns, UpdateUserPatterns,
+    AIOptimizeSchedule, ApplyReplanChanges
 }
 
 def:pub app -> any {
@@ -76,7 +82,13 @@ def:pub app -> any {
 
         # Loading
         spacesLoading: bool = True,
-        tasksLoading: bool = False;
+        tasksLoading: bool = False,
+
+        # Conflict detection
+        conflictsActive: bool = False,
+        conflictInfo: dict = {},
+        showConflictModal: bool = False,
+        overrunRatios: dict = {};
 
     can with entry {
         isLoggedIn = jacIsLoggedIn();
@@ -103,7 +115,7 @@ def:pub app -> any {
     def closeProfile -> None;
     async def createSpace(name: str, color: str) -> None;
     async def createList(name: str, spaceId: str) -> None;
-    async def createTask(title: str, description: str, status: str, priority: str, dueDate: str, parentTaskId: str, startDate: str, startTime: str, endTime: str) -> None;
+    async def createTask(title: str, description: str, status: str, priority: str, dueDate: str, parentTaskId: str, startDate: str, startTime: str, endTime: str, category: str, estimatedDuration: int) -> None;
     async def updateTask(taskId: str, title: str, description: str, status: str, priority: str, dueDate: str, startDate: str, startTime: str, endTime: str) -> None;
     async def updateTaskStatus(taskId: str, status: str) -> None;
     async def deleteTask(taskId: str) -> None;
@@ -120,6 +132,38 @@ def:pub app -> any {
     def closeTask -> None;
     def getSelectedList -> dict;
     async def saveTaskChanges -> None;
+
+    def computeConflicts(taskList: list, ratios: dict) -> dict {
+        defaultRatios = {"Coding": 1.42, "Research": 1.35, "Writing": 1.22, "Meeting": 1.08, "Admin": 1.05};
+        scheduled = taskList.filter(lambda t: any -> bool {
+            return t.start_date != "" and t.start_time != "" and t.status != "done";
+        });
+        conflictingIds = [];
+        totalOverlapMins = 0;
+        scheduled.forEach(lambda a: any -> None {
+            scheduled.forEach(lambda b: any -> None {
+                if a.id == b.id { return; }
+                if a.start_date != b.start_date { return; }
+                aStart = parseInt(a.start_time.split(":")[0]) * 60 + parseInt(a.start_time.split(":")[1]);
+                aDur = a.estimated_duration if a.estimated_duration else 60;
+                aRatio = ratios[a.category] if (a.category and ratios[a.category]) else (defaultRatios[a.category] if (a.category and defaultRatios[a.category]) else 1.1);
+                aEnd = aStart + Math.ceil(aDur * aRatio);
+                bStart = parseInt(b.start_time.split(":")[0]) * 60 + parseInt(b.start_time.split(":")[1]);
+                bDur = b.estimated_duration if b.estimated_duration else 60;
+                bRatio = ratios[b.category] if (b.category and ratios[b.category]) else (defaultRatios[b.category] if (b.category and defaultRatios[b.category]) else 1.1);
+                bEnd = bStart + Math.ceil(bDur * bRatio);
+                if aStart < bEnd and bStart < aEnd {
+                    if not conflictingIds.includes(a.id) { conflictingIds.push(a.id); }
+                    totalOverlapMins += Math.min(aEnd, bEnd) - Math.max(aStart, bStart);
+                }
+            });
+        });
+        return {
+            "conflicting_ids": conflictingIds,
+            "tasks_affected": conflictingIds.length,
+            "total_adjustment_minutes": Math.round(totalOverlapMins / 2)
+        };
+    }
 
     themeClass = "app-root" + (" light" if not darkMode else "");
 
@@ -173,7 +217,7 @@ def:pub app -> any {
                         )}
                     >
                         <span className="theme-icon">
-                            {("🌙" if darkMode else "☀️")}
+                            {(<Moon size={16} />) if darkMode else (<Sun size={16} />)}
                         </span>
                         <div className={"toggle-track" + (" on" if not darkMode else "")}>
                             <div className="toggle-thumb"></div>
@@ -208,36 +252,71 @@ def:pub app -> any {
                     
                 />
                 <div className="main-content">
-                    <div className="view-tab-bar">
+                    {(
+                        <div className="conflict-banner">
+                            <AlertTriangle size={16} className="conflict-banner-icon" />
+                            <span className="conflict-banner-text">
+                                <strong>Scheduling Conflict Active</strong>
+                                {" — Your current schedule has overlapping tasks. "}
+                                <button
+                                    className="conflict-banner-link"
+                                    onClick={lambda -> None { showConflictModal = True; }}
+                                >
+                                    View AI suggestion
+                                </button>
+                                {" to resolve this conflict."}
+                            </span>
+                            <button
+                                className="conflict-banner-dismiss"
+                                onClick={lambda -> None { conflictsActive = False; }}
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                    ) if conflictsActive and view != "modify_schedule" else None}
+                    {(
+                        <ModifyScheduleView
+                            tasks={tasks}
+                            conflictInfo={conflictInfo}
+                            onBack={lambda -> None { view = "list"; }}
+                            onSaved={lambda -> None {
+                                view = "list";
+                                conflictsActive = False;
+                                conflictInfo = {};
+                                fetchTasks();
+                            }}
+                        />
+                    ) if view == "modify_schedule" else None}
+                    <div className={"view-tab-bar" + (" d-none" if view == "modify_schedule" else "")}>
                         <button
                             onClick={lambda -> None { view = "list"; }}
                             className={("view-tab active" if view == "list" else "view-tab")}
                         >
-                            ≡ List
+                            <List size={14} /> List
                         </button>
                         <button
                             onClick={lambda -> None { view = "board"; }}
                             className={("view-tab active" if view == "board" else "view-tab")}
                         >
-                            ⊞ Board
+                            <LayoutGrid size={14} /> Board
                         </button>
                         <button
                             onClick={lambda -> None { view = "calendar"; }}
                             className={("view-tab active" if view == "calendar" else "view-tab")}
                         >
-                            📅 Calendar
+                            <Calendar size={14} /> Calendar
                         </button>
                         <button
                             onClick={lambda -> None { view = "dashboard"; }}
                             className={("view-tab active" if view == "dashboard" else "view-tab")}
                         >
-                            📊 Dashboard
+                            <BarChart2 size={14} /> Dashboard
                         </button>
                         <button
                             onClick={lambda -> None { view = "analytics"; }}
                             className={("view-tab active" if view == "analytics" else "view-tab")}
                         >
-                            📈 Analytics
+                            <TrendingUp size={14} /> Analytics
                         </button>
                     </div>
 
@@ -251,6 +330,8 @@ def:pub app -> any {
                             onOpenDetail={openTask}
                         />
                     ) if view == "calendar" else (
+                        None
+                    ) if view == "modify_schedule" else (
                         (
                             <div className="empty-state">
                                 <div className="empty-state-icon">⚡</div>
@@ -377,7 +458,7 @@ def:pub app -> any {
                         onEditEndTimeChange={lambda e: any -> None { editEndTime = e.target.value; }}
                         onAddComment={lambda -> None { addComment(selectedTask.id, commentText); commentText = ""; }}
                         onDeleteComment={deleteComment}
-                        onAddSubtask={lambda title: str -> None { createTask(title, "", "todo", "normal", "", selectedTask.id, "", "", ""); }}
+                        onAddSubtask={lambda title: str -> None { createTask(title, "", "todo", "normal", "", selectedTask.id, "", "", "", "", 0); }}
                     />
                 ) if showTaskDetail else None}
             </div>
@@ -403,7 +484,7 @@ def:pub app -> any {
                                 onClick={lambda -> None { showCreateSpace = False; }}
                                 className="btn-close"
                             >
-                                ×
+                                <X size={16} />
                             </button>
                         </div>
                         <CreateSpaceForm
@@ -422,7 +503,7 @@ def:pub app -> any {
                                 onClick={lambda -> None { showCreateList = False; }}
                                 className="btn-close"
                             >
-                                ×
+                                <X size={16} />
                             </button>
                         </div>
                         <CreateListForm
@@ -443,6 +524,13 @@ def:pub app -> any {
                     onSave={saveProfile}
                 />
             ) if showProfile else None}
+            {(
+                <ConflictAlertModal
+                    conflictInfo={conflictInfo}
+                    onIgnore={lambda -> None { showConflictModal = False; }}
+                    onViewPlan={lambda -> None { showConflictModal = False; view = "modify_schedule"; }}
+                />
+            ) if showConflictModal else None}
         </div>;
 }
 

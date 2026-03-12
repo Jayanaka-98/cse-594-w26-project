@@ -1,5 +1,7 @@
 """Sidebar navigation component for FlowBoard."""
 
+import from "lucide-react" { List, X }
+
 def:pub Sidebar(
     spaces: list,
     lists: list,
@@ -94,7 +96,7 @@ def:pub SpaceItem(
                     className="sidebar-delete-btn"
                     title="Delete space"
                 >
-                    ×
+                    <X size={14} />
                 </button>
             </div>
             {(
@@ -137,7 +139,7 @@ def:pub ListItem(
                 className="list-row-main"
                 onClick={lambda -> None { onSelectList(lst.id); }}
             >
-                <span className="list-icon">≡</span>
+                <List size={14} className="list-icon" />
                 <span className="list-name">{lst.name}</span>
             </button>
             <button
@@ -145,7 +147,7 @@ def:pub ListItem(
                 className="sidebar-delete-btn"
                 title="Delete list"
             >
-                ×
+                <X size={14} />
             </button>
         </div>;
 }
