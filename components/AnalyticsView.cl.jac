@@ -15,17 +15,17 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
         history = result.reports[0] if result.reports else [];
     }
 
-    todoCount = tasks.filter(lambda t: any -> bool { return t.status == "todo"; }).length;
-    inProgressCount = tasks.filter(lambda t: any -> bool { return t.status == "in_progress"; }).length;
-    reviewCount = tasks.filter(lambda t: any -> bool { return t.status == "review"; }).length;
-    doneCount = tasks.filter(lambda t: any -> bool { return t.status == "done"; }).length;
+    todoCount = len(tasks.filter(lambda t: any -> bool { return t.status == "todo"; }));
+    inProgressCount = len(tasks.filter(lambda t: any -> bool { return t.status == "in_progress"; }));
+    reviewCount = len(tasks.filter(lambda t: any -> bool { return t.status == "review"; }));
+    doneCount = len(tasks.filter(lambda t: any -> bool { return t.status == "done"; }));
 
-    urgentCount = tasks.filter(lambda t: any -> bool { return t.priority == "urgent"; }).length;
-    highCount = tasks.filter(lambda t: any -> bool { return t.priority == "high"; }).length;
-    normalCount = tasks.filter(lambda t: any -> bool { return t.priority == "normal"; }).length;
-    lowCount = tasks.filter(lambda t: any -> bool { return t.priority == "low"; }).length;
+    urgentCount = len(tasks.filter(lambda t: any -> bool { return t.priority == "urgent"; }));
+    highCount = len(tasks.filter(lambda t: any -> bool { return t.priority == "high"; }));
+    normalCount = len(tasks.filter(lambda t: any -> bool { return t.priority == "normal"; }));
+    lowCount = len(tasks.filter(lambda t: any -> bool { return t.priority == "low"; }));
 
-    totalTasks = tasks.length;
+    totalTasks = len(tasks);
     completionRate = (Math.round(doneCount / totalTasks * 100)) if totalTasks > 0 else 0;
 
     statusData = [
@@ -44,7 +44,7 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
 
     def getCategoryAccuracy(cat: str) -> dict {
         catHistory = history.filter(lambda h: any -> bool { return h.category == cat; });
-        if catHistory.length == 0 { return {"name": cat, "Estimated": 0, "Actual": 0}; }
+        if len(catHistory) == 0 { return {"name": cat, "Estimated": 0, "Actual": 0}; }
         totalEst = 0;
         totalAct = 0;
         for item in catHistory {
@@ -53,8 +53,8 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
         }
         return {
             "name": cat,
-            "Estimated": Math.round(totalEst / catHistory.length),
-            "Actual": Math.round(totalAct / catHistory.length)
+            "Estimated": Math.round(totalEst / len(catHistory)),
+            "Actual": Math.round(totalAct / len(catHistory))
         };
     }
 
@@ -63,11 +63,11 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
     ).filter(lambda d: any -> bool { return d.Estimated > 0; });
 
     def countTasksAtHour(h: int) -> int {
-        return tasks.filter(lambda t: any -> bool {
+        return len(tasks.filter(lambda t: any -> bool {
             if not t.start_time or t.start_time == "" { return False; }
             parts = t.start_time.split(":");
             return parseInt(parts[0]) == h;
-        }).length;
+        }));
     }
 
     hourlyData = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22].map(
@@ -156,7 +156,7 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
                                 </ResponsiveContainer>
                             </div>
                         </div>
-                    ) if history.length > 0 else None}
+                    ) if len(history) > 0 else None}
 
                     <div className="analytics-charts-row">
                         <div className="analytics-chart-card analytics-chart-wide">

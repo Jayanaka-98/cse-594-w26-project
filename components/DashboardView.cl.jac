@@ -52,17 +52,17 @@ def:pub DashboardView(onOpenDetail: any) -> any {
     def spaceHasTasks(spaceId: str, ft: list) -> bool {
         sl = getListsForSpace(spaceId);
         ids = sl.map(lambda l: any -> str { return l.id; });
-        return ft.filter(lambda t: any -> bool { return ids.includes(t.list_id); }).length > 0;
+        return len(ft.filter(lambda t: any -> bool { return ids.includes(t.list_id); })) > 0;
     }
 
     def spaceTaskCount(spaceId: str, ft: list) -> int {
         sl = getListsForSpace(spaceId);
         ids = sl.map(lambda l: any -> str { return l.id; });
-        return ft.filter(lambda t: any -> bool { return ids.includes(t.list_id); }).length;
+        return len(ft.filter(lambda t: any -> bool { return ids.includes(t.list_id); }));
     }
 
     def countByStatus(s: str) -> int {
-        return tasks.filter(lambda t: any -> bool { return t.parent_task_id == "" and t.status == s; }).length;
+        return len(tasks.filter(lambda t: any -> bool { return t.parent_task_id == "" and t.status == s; }));
     }
 
     def priClass(p: str) -> str {
@@ -86,7 +86,7 @@ def:pub DashboardView(onOpenDetail: any) -> any {
         return "Done";
     }
 
-    totalRoot = tasks.filter(lambda t: any -> bool { return t.parent_task_id == ""; }).length;
+    totalRoot = len(tasks.filter(lambda t: any -> bool { return t.parent_task_id == ""; }));
     ft = getFilteredTasks();
 
     return
@@ -171,7 +171,7 @@ def:pub DashboardView(onOpenDetail: any) -> any {
 
                     {(
                         <p className="dash-empty">No tasks match your filters.</p>
-                    ) if ft.length == 0 else (
+                    ) if len(ft) == 0 else (
                         <div className="dash-spaces">
                             {[
                                 <div key={sp.id} className="dash-space-group">
@@ -184,7 +184,7 @@ def:pub DashboardView(onOpenDetail: any) -> any {
                                         <div key={lst.id} className="dash-list-group">
                                             <div className="dash-list-hdr">
                                                 <span className="dash-list-name">{lst.name}</span>
-                                                <span className="dash-list-cnt">{getTasksForList(lst.id, ft).length}</span>
+                                                <span className="dash-list-cnt">{len(getTasksForList(lst.id, ft))}</span>
                                             </div>
                                             <div className="dash-task-rows">
                                                 {[
@@ -207,7 +207,7 @@ def:pub DashboardView(onOpenDetail: any) -> any {
                                             </div>
                                         </div>
                                         for lst in getListsForSpace(sp.id)
-                                        if getTasksForList(lst.id, ft).length > 0
+                                        if len(getTasksForList(lst.id, ft)) > 0
                                     ]}
                                 </div>
                                 for sp in spaces

@@ -97,7 +97,7 @@ def:pub CalendarView(
     }
 
     def formatWeekLabel -> str {
-        if weekDates.length == 0 { return "Loading..."; }
+        if len(weekDates) == 0 { return "Loading..."; }
         d1 = Reflect.construct(Date, [weekDates[0] + "T12:00:00"]);
         d2 = Reflect.construct(Date, [weekDates[6] + "T12:00:00"]);
         months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -153,7 +153,7 @@ def:pub CalendarView(
         e.preventDefault();
         if draggingTaskId == "" { return; }
         matches = internalTasks.filter(lambda t: any -> bool { return t.id == draggingTaskId; });
-        if matches.length == 0 { draggingTaskId = ""; return; }
+        if len(matches) == 0 { draggingTaskId = ""; return; }
         task = matches[0];
         colEl = e.currentTarget;
         rect = colEl.getBoundingClientRect();
@@ -203,7 +203,7 @@ def:pub CalendarView(
     async def handleResizeEnd(e: any) -> None {
         if resizingTaskId == "" { return; }
         matches = internalTasks.filter(lambda t: any -> bool { return t.id == resizingTaskId; });
-        if matches.length > 0 and resizeCurrentEndTime != "" {
+        if len(matches) > 0 and resizeCurrentEndTime != "" {
             task = matches[0];
             await onUpdateTask(task.id, task.title, task.description, task.status, task.priority, task.due_date, task.start_date, task.start_time, resizeCurrentEndTime);
         }
@@ -270,7 +270,7 @@ def:pub CalendarView(
     unscheduled = getUnscheduledTasks();
 
     explanationTaskMatches = internalTasks.filter(lambda t: any -> bool { return t.id == explanationTaskId; });
-    explanationTask = explanationTaskMatches[0] if explanationTaskMatches.length > 0 else None;
+    explanationTask = explanationTaskMatches[0] if len(explanationTaskMatches) > 0 else None;
 
     return
         <div className="cal-container">
@@ -293,7 +293,7 @@ def:pub CalendarView(
                         Dismiss
                     </button>
                 </div>
-            ) if replanBannerChanges.length > 0 else None}
+            ) if len(replanBannerChanges) > 0 else None}
 
             {(
                 <ExplanationPanel
@@ -311,12 +311,12 @@ def:pub CalendarView(
             <div className="cal-sidebar">
                 <div className="cal-sidebar-header">
                     <span className="cal-sidebar-title">Unscheduled</span>
-                    <span className="cal-sidebar-count">{unscheduled.length}</span>
+                    <span className="cal-sidebar-count">{len(unscheduled)}</span>
                 </div>
                 <div className="cal-sidebar-tasks">
                     {(
                         <p className="cal-sidebar-empty">All tasks scheduled</p>
-                    ) if unscheduled.length == 0 else (
+                    ) if len(unscheduled) == 0 else (
                         <div>
                             {[
                                 <div

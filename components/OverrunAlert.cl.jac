@@ -13,7 +13,7 @@ def:pub OverrunAlert(
     def formatTime(t: str) -> str {
         if not t or t == "" { return t; }
         parts = t.split(":");
-        if parts.length < 2 { return t; }
+        if len(parts) < 2 { return t; }
         h = parseInt(parts[0]);
         suffix = "AM" if h < 12 else "PM";
         dh = h if h <= 12 else h - 12;

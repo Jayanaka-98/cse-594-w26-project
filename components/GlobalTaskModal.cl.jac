@@ -48,7 +48,7 @@ def:pub GlobalTaskModal(
     async def fetchSpaces -> None {
         result = root spawn ListSpaces();
         spaces = result.reports[0] if result.reports else [];
-        if spaces.length == 1 {
+        if len(spaces) == 1 {
             selectedSpaceId = spaces[0].id;
         }
     }

@@ -50,7 +50,7 @@ impl app.fetchSpaces -> None {
     spacesLoading = True;
     result = root spawn ListSpaces();
     spaces = result.reports[0] if result.reports else [];
-    if spaces.length == 0 and loggedInUsername == "dummy" {
+    if len(spaces) == 0 and loggedInUsername == "dummy" {
         root spawn SeedDemoData();
         result2 = root spawn ListSpaces();
         spaces = result2.reports[0] if result2.reports else [];
@@ -174,7 +174,7 @@ impl app.updateTask(taskId: str, title: str, description: str, status: str, prio
 
 impl app.updateTaskStatus(taskId: str, status: str) -> None {
     filtered = tasks.filter(lambda t: any -> bool { return t.id == taskId; });
-    if filtered.length == 0 { return; }
+    if len(filtered) == 0 { return; }
     curr = filtered[0];
     await updateTask(
         taskId,
@@ -273,7 +273,7 @@ impl app.handleSignup -> None {
         authError = "Please fill in all fields";
         return;
     }
-    if password.length < 4 {
+    if len(password) < 4 {
         authError = "Password must be at least 4 characters";
         return;
     }
@@ -353,7 +353,7 @@ impl app.closeTask -> None {
 impl app.getSelectedList -> dict {
     if selectedListId == "" { return {}; }
     filtered = lists.filter(lambda l: any -> bool { return l.id == selectedListId; });
-    if filtered.length > 0 { return filtered[0]; }
+    if len(filtered) > 0 { return filtered[0]; }
     return {};
 }
 

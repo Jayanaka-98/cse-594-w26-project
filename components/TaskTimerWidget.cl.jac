@@ -29,7 +29,7 @@ def:pub TaskTimerWidget(
         scheduled = tasks.filter(lambda t: any -> bool {
             return t.start_date != "" and t.start_time != "" and t.id != activeTaskId and t.status != "done";
         });
-        if scheduled.length == 0 { return None; }
+        if len(scheduled) == 0 { return None; }
         sorted = scheduled.sort(lambda a: any, b: any -> int {
             ka = a.start_date + "T" + a.start_time;
             kb = b.start_date + "T" + b.start_time;
@@ -106,7 +106,7 @@ def:pub TaskTimerWidget(
         schedulable = tasks.filter(lambda t: any -> bool {
             return t.status != "done" and t.status == "in_progress";
         });
-        if schedulable.length == 0 {
+        if len(schedulable) == 0 {
             schedulable = tasks.filter(lambda t: any -> bool {
                 return t.status == "todo" and t.start_date != "" and t.start_time != "";
             });
@@ -131,7 +131,7 @@ def:pub TaskTimerWidget(
                             for t in schedulable.slice(0, 3)
                         ]}
                     </div>
-                ) if schedulable.length > 0 else None}
+                ) if len(schedulable) > 0 else None}
             </div>;
     }
 

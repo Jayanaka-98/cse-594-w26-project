@@ -36,7 +36,7 @@ def:pub Sidebar(
                             <div className="sidebar-empty">
                                 No spaces yet
                             </div>
-                        ) if spaces.length == 0 else (
+                        ) if len(spaces) == 0 else (
                             <div>
                                 {[
                                     <SpaceItem

@@ -142,7 +142,7 @@ def:pub TaskDetailPanel(
                 <div className="detail-section">
                     <div className="detail-section-header">
                         <label className="detail-section-label">
-                            Subtasks ({subtasks.length})
+                            Subtasks ({len(subtasks)})
                         </label>
                     </div>
                     {(
@@ -154,12 +154,12 @@ def:pub TaskDetailPanel(
                                 /> for st in subtasks
                             ]}
                         </div>
-                    ) if subtasks.length > 0 else None}
+                    ) if len(subtasks) > 0 else None}
                     <AddSubtaskRow onAdd={onAddSubtask} />
                 </div>
                 <div className="detail-section">
                     <label className="detail-section-label">
-                        Comments ({comments.length})
+                        Comments ({len(comments)})
                     </label>
                     <div className="comments-list">
                         {[

@@ -160,7 +160,7 @@ def:pub app -> any {
         });
         return {
             "conflicting_ids": conflictingIds,
-            "tasks_affected": conflictingIds.length,
+            "tasks_affected": len(conflictingIds),
             "total_adjustment_minutes": Math.round(totalOverlapMins / 2)
         };
     }
@@ -346,7 +346,7 @@ def:pub app -> any {
                                     + Create Space
                                 </button>
                             </div>
-                        ) if spaces.length == 0 else (
+                        ) if len(spaces) == 0 else (
                             <div className="nested-view">
                                 {(
                                     <div className="loading-tasks">
@@ -361,7 +361,7 @@ def:pub app -> any {
                                                     <div className={"space-dot space-color-" + space.color}></div>
                                                     <span className="space-section-title">{space.name}</span>
                                                     <span className="task-count">
-                                                        {lists.filter(lambda l: any -> bool { return l.space_id == space.id; }).length} lists
+                                                        {len(lists.filter(lambda l: any -> bool { return l.space_id == space.id; }))} lists
                                                     </span>
                                                     <button
                                                         onClick={lambda -> None { createListForSpaceId = space.id; showCreateList = True; }}
@@ -373,14 +373,14 @@ def:pub app -> any {
                                                 <div className="space-section-body">
                                                     {(
                                                         <div className="list-empty-state">No lists in this space yet.</div>
-                                                    ) if lists.filter(lambda l: any -> bool { return l.space_id == space.id; }).length == 0 else (
+                                                    ) if len(lists.filter(lambda l: any -> bool { return l.space_id == space.id; })) == 0 else (
                                                         <div>
                                                             {[
                                                                 <div className="list-section" key={lst.id}>
                                                                     <div className="list-section-header">
                                                                         <span className="list-section-title">{lst.name}</span>
                                                                         <span className="task-count">
-                                                                            {tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; }).length} tasks
+                                                                            {len(tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; }))} tasks
                                                                         </span>
                                                                         <button
                                                                             onClick={lambda -> None { selectedListId = lst.id; showCreateTask = True; }}
@@ -402,7 +402,7 @@ def:pub app -> any {
                                                                         <div className="list-section-tasks">
                                                                             {(
                                                                                 <div className="list-empty-tasks">No tasks yet.</div>
-                                                                            ) if tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; }).length == 0 else (
+                                                                            ) if len(tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; })) == 0 else (
                                                                                 <div>
                                                                                     {[
                                                                                         <TaskCard

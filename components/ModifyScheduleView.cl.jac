@@ -129,7 +129,7 @@ def:pub ModifyScheduleView(
             }
             for st in suggestedTasks if st.changed
         ];
-        if changes.length > 0 {
+        if len(changes) > 0 {
             root spawn ApplyReplanChanges(changes=changes);
         }
         saving = False;
@@ -241,7 +241,7 @@ def:pub ModifyScheduleView(
                             {(
                                 <div className="msv-resolved-banner">
                                     <CheckCircle size={14} />
-                                    {"All conflicts resolved. This schedule includes " + suggestedTasks.length.toString() + " tasks totaling " + totalSuggestedMins.toString() + " minutes."}
+                                    {"All conflicts resolved. This schedule includes " + str(len(suggestedTasks)) + " tasks totaling " + totalSuggestedMins.toString() + " minutes."}
                                 </div>
                             ) if optimization and optimization.all_conflicts_resolved else None}
                         </div>
@@ -274,7 +274,7 @@ def:pub ModifyScheduleView(
                                         for entry in optimization.optimizations.entries()
                                     ]}
                                 </div>
-                            ) if optimization and optimization.optimizations and optimization.optimizations.length > 0 else None}
+                            ) if optimization and optimization.optimizations and len(optimization.optimizations) > 0 else None}
                         </div>
                     ) if not loading else (
                         <div className="msv-loading">

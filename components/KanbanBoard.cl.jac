@@ -17,7 +17,7 @@ def:pub KanbanBoard(
         <div className="kanban-board">
             <KanbanColumn
                 title="Todo"
-                count={todoTasks.length}
+                count={len(todoTasks)}
                 colorClass="col-todo"
                 tasks={todoTasks}
                 onOpenDetail={onOpenDetail}
@@ -26,7 +26,7 @@ def:pub KanbanBoard(
             />
             <KanbanColumn
                 title="In Progress"
-                count={inProgressTasks.length}
+                count={len(inProgressTasks)}
                 colorClass="col-in-progress"
                 tasks={inProgressTasks}
                 onOpenDetail={onOpenDetail}
@@ -35,7 +35,7 @@ def:pub KanbanBoard(
             />
             <KanbanColumn
                 title="Review"
-                count={reviewTasks.length}
+                count={len(reviewTasks)}
                 colorClass="col-review"
                 tasks={reviewTasks}
                 onOpenDetail={onOpenDetail}
@@ -44,7 +44,7 @@ def:pub KanbanBoard(
             />
             <KanbanColumn
                 title="Done"
-                count={doneTasks.length}
+                count={len(doneTasks)}
                 colorClass="col-done"
                 tasks={doneTasks}
                 onOpenDetail={onOpenDetail}
@@ -74,7 +74,7 @@ def:pub KanbanColumn(
                     <div className="kanban-empty">
                         No tasks
                     </div>
-                ) if tasks.length == 0 else (
+                ) if len(tasks) == 0 else (
                     <div>
                         {[
                             <TaskCard

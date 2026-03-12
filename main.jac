@@ -1427,7 +1427,7 @@ walker:priv AIOptimizeSchedule {
     }
 
     can finalize with Root exit {
-        if self.all_tasks.length == 0 {
+        if len(self.all_tasks) == 0 {
             report {
                 "overview": "No scheduled tasks found to optimize.",
                 "optimizations": [],
