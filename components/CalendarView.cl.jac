@@ -6,7 +6,8 @@ import from "lucide-react" { Lock, LockOpen, AlertTriangle, ChevronLeft, Chevron
 
 def:pub CalendarView(
     onUpdateTask: any,
-    onOpenDetail: any
+    onOpenDetail: any,
+    explanationCache: dict
 ) -> any {
     has weekOffset: int = 0,
         weekDates: list = [],
@@ -19,7 +20,6 @@ def:pub CalendarView(
         resizeCurrentEndTime: str = "",
         explanationTaskId: str = "",
         explanationPinned: bool = False,
-        explanationCache: dict = {},
         hoverTimerId: int = 0,
         conflictingIds: list = [],
         replanBannerChanges: list = [],

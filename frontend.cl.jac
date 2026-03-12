@@ -90,7 +90,8 @@ def:pub app -> any {
         showConflictModal: bool = False,
         overrunRatios: dict = {},
         aiPlan: any = None,
-        aiPlanLoading: bool = False;
+        aiPlanLoading: bool = False,
+        explanationCache: dict = {};
 
     can with entry {
         isLoggedIn = jacIsLoggedIn();
@@ -337,6 +338,7 @@ def:pub app -> any {
                         <CalendarView
                             onUpdateTask={updateTask}
                             onOpenDetail={openTask}
+                            explanationCache={explanationCache}
                         />
                     ) if view == "calendar" else (
                         (

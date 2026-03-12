@@ -1,7 +1,7 @@
 """AI Scheduling Explanation Panel — hover/pin panel with 4 tabs and Accept/Modify/Reject."""
 
-sv import from main { AIExplainSchedule, ApplyReplanChanges, AIReplanSchedule }
-import from "lucide-react" { Brain, Pin, PinOff, X, TrendingUp, Sparkles, Flag, Check, Pencil }
+sv import from main { AIExplainSchedule, ApplyReplanChanges, AIReplanSchedule, AIGetAlternativeSlots, UpdateTask }
+import from "lucide-react" { Brain, Pin, PinOff, X, TrendingUp, Sparkles, Flag, Check, Pencil, ArrowLeft, Calendar }
 
 def:pub ExplanationPanel(
     task: any,
@@ -13,16 +13,16 @@ def:pub ExplanationPanel(
     onReject: any
 ) -> any {
     has activeTab: str = "workload",
-        explanation: any = None,
-        loading: bool = True,
+        explanation: any = cachedData,
+        loading: bool = (False if cachedData else True),
         isPinned: bool = False,
-        replanChanges: list = [];
+        replanChanges: list = [],
+        showRejectionView: bool = False,
+        altSlotsLoading: bool = False,
+        alternativeSlots: list = [];
 
     can with entry {
-        if cachedData {
-            explanation = cachedData;
-            loading = False;
-        } else {
+        if not cachedData {
             fetchExplanation();
         }
     }
@@ -35,6 +35,33 @@ def:pub ExplanationPanel(
             if onCached { onCached(explanation); }
         }
         loading = False;
+    }
+
+    async def handleReject -> None {
+        showRejectionView = True;
+        altSlotsLoading = True;
+        result = root spawn AIGetAlternativeSlots(task_id=task.id);
+        if result.reports and result.reports[0].slots {
+            alternativeSlots = result.reports[0].slots;
+        }
+        altSlotsLoading = False;
+    }
+
+    async def applyAlternativeSlot(slot: any) -> None {
+        root spawn UpdateTask(
+            task_id=task.id,
+            title=task.title,
+            description=(task.description if task.description else ""),
+            status=(task.status if task.status else "todo"),
+            priority=(task.priority if task.priority else "normal"),
+            due_date=(task.due_date if task.due_date else ""),
+            start_date=slot.start_date,
+            start_time=slot.start_time,
+            end_time=slot.end_time,
+            estimated_duration=(task.estimated_duration if task.estimated_duration else 60),
+            category=(task.category if task.category else "")
+        );
+        if onClose { onClose("applied"); }
     }
 
     def formatTime(t: str) -> str {
@@ -139,6 +166,50 @@ def:pub ExplanationPanel(
                 </div>
 
                 {(
+                    <div className="exp-rejection-view">
+                        <div className="exp-rejected-banner">
+                            <X size={16} className="exp-rejected-icon" />
+                            <div>
+                                <div className="exp-rejected-title">Suggestion Rejected</div>
+                                <div className="exp-rejected-sub">AI will learn from your preference.</div>
+                            </div>
+                        </div>
+                        <p className="exp-alt-prompt">Choose an alternative slot or keep the original:</p>
+                        {(
+                            <div className="exp-loading">
+                                <div className="loading-spinner"></div>
+                                <span>Finding alternatives...</span>
+                            </div>
+                        ) if altSlotsLoading else (
+                            <div className="exp-alt-slots">
+                                {[
+                                    <button
+                                        key={slot.start_date + slot.start_time}
+                                        className="exp-alt-slot"
+                                        onClick={lambda -> None { applyAlternativeSlot(slot); }}
+                                    >
+                                        <Calendar size={14} className="exp-alt-slot-icon" />
+                                        <div className="exp-alt-slot-info">
+                                            <div className="exp-alt-slot-date">{formatDate(slot.start_date) + " · " + formatTime(slot.start_time)}</div>
+                                            <div className="exp-alt-slot-bar-wrap">
+                                                <div className="exp-alt-slot-bar-fill" style={{"width": slot.productivity_score.toString() + "%"}}></div>
+                                                <span className="exp-alt-slot-pct">{slot.productivity_score.toString() + "% productivity"}</span>
+                                            </div>
+                                        </div>
+                                    </button>
+                                    for slot in alternativeSlots
+                                ]}
+                                <button className="exp-keep-original" onClick={onClose}>
+                                    <span className="exp-keep-icon">⏱</span>
+                                    Keep original slot (no AI adjustment)
+                                </button>
+                            </div>
+                        )}
+                        <button className="exp-back-btn" onClick={lambda -> None { showRejectionView = False; }}>
+                            <ArrowLeft size={14} /> Back
+                        </button>
+                    </div>
+                ) if showRejectionView else (
                     <div className="exp-loading">
                         <div className="loading-spinner"></div>
                         <span>Generating explanation...</span>
@@ -330,7 +401,7 @@ def:pub ExplanationPanel(
                         </button>
                         <button
                             className="exp-btn-reject"
-                            onClick={onReject}
+                            onClick={lambda -> None { handleReject(); }}
                         >
                             <X size={13} /> Reject
                         </button>

@@ -576,6 +576,24 @@ obj FactorScore {
 sem FactorScore.factor = "Factor name: one of Productivity Peak, Deadline Urgency, Calendar Fit, Task Complexity";
 sem FactorScore.score = "Factor weight score 0-100";
 
+obj AlternativeSlot {
+    has start_date: str,
+        start_time: str,
+        end_time: str,
+        productivity_score: int,
+        reasoning: str;
+}
+sem AlternativeSlot.start_date = "Date in YYYY-MM-DD format";
+sem AlternativeSlot.start_time = "Start time in HH:MM 24-hour format";
+sem AlternativeSlot.end_time = "End time in HH:MM 24-hour format";
+sem AlternativeSlot.productivity_score = "Productivity suitability score for this slot 0-100, based on user patterns";
+sem AlternativeSlot.reasoning = "One-sentence reason this slot is a good alternative";
+
+obj AlternativeSlots {
+    has slots: list[AlternativeSlot];
+}
+sem AlternativeSlots.slots = "Exactly 3 alternative time slots, sorted by productivity_score descending";
+
 obj ScheduleExplanation {
     has headline: str,
         workload_insight: str,
@@ -654,6 +672,19 @@ def suggest_schedule_slot(
 sem suggest_schedule_slot = "Suggest the optimal time slot to schedule a new task given the user's existing schedule and productivity patterns. Prefer slots that match the user's peak productivity hours for this task category. Avoid scheduling conflicts with existing tasks. Respect due dates — do not schedule past the due date. If no schedule data exists, suggest a reasonable working-hours slot starting from today.";
 sem suggest_schedule_slot.existing_schedule = "List of already-scheduled tasks, each with start_date, start_time, end_time, title, category, is_locked fields";
 sem suggest_schedule_slot.user_productivity_peaks = "Dict mapping hour (0-23 as string keys) to productivity score (0-100). Empty dict if no data yet.";
+
+def suggest_alternative_slots(
+    task_title: str,
+    category: str,
+    estimated_duration_minutes: int,
+    original_slot: dict,
+    existing_schedule: list[dict],
+    user_productivity_peaks: dict
+) -> AlternativeSlots by llm(temperature=0.3);
+sem suggest_alternative_slots = "The user rejected the AI's suggested schedule for their task. Suggest exactly 3 alternative time slots as replacements. Each slot must avoid conflicts with existing_schedule. Prefer slots near the user's productivity peaks for this category. Do not repeat the original_slot. Sort alternatives by productivity_score descending.";
+sem suggest_alternative_slots.original_slot = "The slot the user rejected, with start_date, start_time, end_time fields";
+sem suggest_alternative_slots.existing_schedule = "Currently scheduled tasks with start_date, start_time, end_time, title fields. Avoid overlaps.";
+sem suggest_alternative_slots.user_productivity_peaks = "Dict mapping hour (0-23 as string keys) to productivity score (0-100). Empty dict if no data.";
 
 def generate_schedule_explanation(
     task_title: str,
@@ -844,6 +875,79 @@ walker:priv AIExplainSchedule {
             "user_estimated_duration": self.target_duration,
             "tip": explanation.tip,
             "factors": [{"factor": f.factor, "score": f.score} for f in explanation.factors]
+        };
+    }
+}
+
+walker:priv AIGetAlternativeSlots {
+    has task_id: str;
+    has all_tasks: list = [];
+    has user_peaks: dict = {};
+    has target_found: bool = False;
+    has target_title: str = "";
+    has target_category: str = "";
+    has target_duration: int = 60;
+    has target_start_date: str = "";
+    has target_start_time: str = "";
+    has target_end_time: str = "";
+
+    can start with Root entry {
+        visit [-->];
+    }
+
+    can collect_tasks with Task entry {
+        if here.id == self.task_id {
+            self.target_found = True;
+            self.target_title = here.title;
+            self.target_category = here.category;
+            self.target_duration = here.estimated_duration;
+            self.target_start_date = here.start_date;
+            self.target_start_time = here.start_time;
+            self.target_end_time = here.end_time;
+        }
+        if here.start_date != "" and here.start_time != "" and here.id != self.task_id {
+            self.all_tasks.append({
+                "title": here.title,
+                "start_date": here.start_date,
+                "start_time": here.start_time,
+                "end_time": here.end_time
+            });
+        }
+    }
+
+    can collect_patterns with UserPatterns entry {
+        self.user_peaks = here.productivity_peaks;
+    }
+
+    can finalize with Root exit {
+        if not self.target_found {
+            report {"slots": []};
+            return;
+        }
+        original = {
+            "start_date": self.target_start_date,
+            "start_time": self.target_start_time,
+            "end_time": self.target_end_time
+        };
+        result = suggest_alternative_slots(
+            task_title=self.target_title,
+            category=self.target_category,
+            estimated_duration_minutes=self.target_duration,
+            original_slot=original,
+            existing_schedule=self.all_tasks,
+            user_productivity_peaks=self.user_peaks
+        );
+        report {
+            "slots": [
+                {
+                    "start_date": s.start_date,
+                    "start_time": s.start_time,
+                    "end_time": s.end_time,
+                    "productivity_score": s.productivity_score,
+                    "reasoning": s.reasoning
+                }
+                for s in result.slots
+            ]
         };
     }
 }
