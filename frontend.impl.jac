@@ -7,7 +7,10 @@ impl app.fetchProfile -> None {
         profileDisplayName = p.display_name;
         darkMode = p.theme == "dark";
         profileDefaultView = p.default_view;
-        view = p.default_view;
+        savedView = localStorage.getItem("flowboard_view");
+        if not savedView or savedView == "" {
+            view = p.default_view;
+        }
     }
 }
 
@@ -74,8 +77,8 @@ impl app.fetchTasks -> None {
     info = computeConflicts(tasks, ratios);
     conflictInfo = info;
     conflictsActive = info.tasks_affected > 0;
-    if info.tasks_affected > 0 {
-        if not showConflictModal and view != "replanning" {
+    if info.tasks_affected > 0 and view != "replanning" {
+        if not showConflictModal {
             showConflictModal = True;
         }
         aiPlanLoading = True;
@@ -270,6 +273,10 @@ impl app.handleLogin -> None {
         isLoggedIn = True;
         username = "";
         password = "";
+        await fetchProfile();
+        await fetchSpaces();
+        await fetchLists();
+        await fetchTasks();
     } else {
         authError = "Invalid username or password";
     }
@@ -293,6 +300,10 @@ impl app.handleSignup -> None {
         isLoggedIn = True;
         username = "";
         password = "";
+        await fetchProfile();
+        await fetchSpaces();
+        await fetchLists();
+        await fetchTasks();
     } else {
         authError = result["error"] if result["error"] else "Signup failed";
     }

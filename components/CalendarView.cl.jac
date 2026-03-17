@@ -1,8 +1,8 @@
 """Calendar view with week grid, unscheduled sidebar, drag-and-drop scheduling, and resize."""
 
-sv import from main { ListTasks, UpdateTaskLock, AIReplanSchedule, ApplyReplanChanges }
+sv import from main { ListTasks, UpdateTaskLock, AIReplanSchedule, ApplyReplanChanges, RolloverPastTasks }
 import from .ExplanationPanel { ExplanationPanel }
-import from "lucide-react" { Lock, LockOpen, AlertTriangle, ChevronLeft, ChevronRight }
+import from "lucide-react" { Lock, LockOpen, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle, XCircle, ChevronsRight }
 
 def:pub CalendarView(
     onUpdateTask: any,
@@ -23,7 +23,9 @@ def:pub CalendarView(
         hoverTimerId: int = 0,
         conflictingIds: list = [],
         replanBannerChanges: list = [],
-        replanBannerExplanation: str = "";
+        replanBannerExplanation: str = "",
+        rejectedChangeIds: list = [],
+        rolloverToast: str = "";
 
     can with entry {
         fetchTasks();
@@ -35,10 +37,18 @@ def:pub CalendarView(
     }
 
     async def fetchTasks -> None {
+        el = document.querySelector(".cal-grid-scroll");
+        prevScroll = el.scrollTop if el else -1;
         result = root spawn ListTasks(list_id="");
         loaded = result.reports[0] if result.reports else [];
         internalTasks = loaded;
         conflictingIds = computeLocalConflicts(loaded);
+        if prevScroll >= 0 {
+            setTimeout(lambda -> None {
+                el2 = document.querySelector(".cal-grid-scroll");
+                if el2 { el2.scrollTop = prevScroll; }
+            }, 0);
+        }
     }
 
     def computeLocalConflicts(taskList: list) -> list {
@@ -174,9 +184,10 @@ def:pub CalendarView(
         replanResult = root spawn AIReplanSchedule(new_task_id=droppedTaskId);
         if replanResult.reports {
             proposal = replanResult.reports[0];
-            if proposal.has_conflict {
+            if proposal.has_conflict == True and Array.isArray(proposal.changes) and proposal.changes.length > 0 {
                 replanBannerChanges = proposal.changes;
-                replanBannerExplanation = proposal.explanation;
+                replanBannerExplanation = (proposal.explanation + "") if proposal.explanation else "";
+                rejectedChangeIds = [];
             }
         }
     }
@@ -259,11 +270,92 @@ def:pub CalendarView(
         await fetchTasks();
     }
 
+    async def handleRollover -> None {
+        result = root spawn RolloverPastTasks();
+        if result.reports {
+            data = result.reports[0];
+            count = data["moved_count"] if data["moved_count"] else 0;
+            rolloverToast = count.toString() + " task" + ("s" if count != 1 else "") + " moved to this week";
+            setTimeout(lambda -> None { rolloverToast = ""; }, 3500);
+        }
+        await fetchTasks();
+    }
+
     async def acceptReplan -> None {
-        root spawn ApplyReplanChanges(changes=replanBannerChanges);
+        pending = getPendingChanges();
+        root spawn ApplyReplanChanges(changes=pending);
         replanBannerChanges = [];
         replanBannerExplanation = "";
+        rejectedChangeIds = [];
         await fetchTasks();
+    }
+
+    # ---- Replan diff helpers ----
+
+    def getPendingChanges -> list {
+        return replanBannerChanges.filter(lambda c: any -> bool {
+            return not rejectedChangeIds.includes(c.task_id);
+        });
+    }
+
+    def getGhostEventsForDate(dateStr: str) -> list {
+        return getPendingChanges().filter(lambda c: any -> bool {
+            return c.new_start_date == dateStr;
+        });
+    }
+
+    def isMovingTask(taskId: str) -> bool {
+        return getPendingChanges().some(lambda c: any -> bool {
+            return c.task_id == taskId;
+        });
+    }
+
+    def getGhostTop(change: any) -> str {
+        startMins = timeToMins(change.new_start_time);
+        top = Math.max(0, startMins - 360);
+        return top.toString() + "px";
+    }
+
+    def getGhostHeight(change: any) -> str {
+        startMins = timeToMins(change.new_start_time);
+        endMins = timeToMins(change.new_end_time);
+        if endMins <= startMins { endMins = startMins + 60; }
+        h = Math.max(30, endMins - startMins);
+        return h.toString() + "px";
+    }
+
+    async def acceptOneChange(change: any) -> None {
+        root spawn ApplyReplanChanges(changes=[change]);
+        newChanges = replanBannerChanges.filter(lambda c: any -> bool { return c.task_id != change.task_id; });
+        replanBannerChanges = newChanges;
+        if len(newChanges) == 0 {
+            replanBannerExplanation = "";
+            rejectedChangeIds = [];
+        }
+        await fetchTasks();
+    }
+
+    def rejectOneChange(change: any) -> None {
+        newRejected = rejectedChangeIds.concat([change.task_id]);
+        rejectedChangeIds = newRejected;
+        remaining = replanBannerChanges.filter(lambda c: any -> bool {
+            return not newRejected.includes(c.task_id);
+        });
+        if len(remaining) == 0 {
+            replanBannerChanges = [];
+            replanBannerExplanation = "";
+            rejectedChangeIds = [];
+        }
+    }
+
+    def getOriginalTask(taskId: str) -> any {
+        matches = internalTasks.filter(lambda t: any -> bool { return t.id == taskId; });
+        return matches[0] if len(matches) > 0 else None;
+    }
+
+    def formatTimeRange(startTime: str, endTime: str, dateStr: str) -> str {
+        if not startTime or startTime == "" { return dateStr; }
+        return startTime + " – " + endTime + "  ·  " + dateStr;
     }
 
     hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
@@ -271,6 +363,8 @@ def:pub CalendarView(
 
     explanationTaskMatches = internalTasks.filter(lambda t: any -> bool { return t.id == explanationTaskId; });
     explanationTask = explanationTaskMatches[0] if len(explanationTaskMatches) > 0 else None;
+
+    pendingCount = len(getPendingChanges());
 
     return
         <div className="cal-container">
@@ -283,26 +377,13 @@ def:pub CalendarView(
             ) if resizingTaskId != "" else None}
 
             {(
-                <div className="cal-replan-banner">
-                    <AlertTriangle size={16} className="cal-replan-icon" />
-                    <span className="cal-replan-text">{replanBannerExplanation}</span>
-                    <button className="cal-replan-accept" onClick={lambda -> None { acceptReplan(); }}>
-                        Accept Changes
-                    </button>
-                    <button className="cal-replan-dismiss" onClick={lambda -> None { replanBannerChanges = []; replanBannerExplanation = ""; }}>
-                        Dismiss
-                    </button>
-                </div>
-            ) if len(replanBannerChanges) > 0 else None}
-
-            {(
                 <ExplanationPanel
                     key={explanationTaskId}
                     task={explanationTask}
                     cachedData={explanationCache[explanationTaskId] if explanationCache[explanationTaskId] else None}
                     onCached={lambda data: any -> None { explanationCache[explanationTaskId] = data; }}
-                    onClose={lambda -> None { explanationTaskId = ""; explanationPinned = False; }}
-                    onAccept={lambda -> None { explanationTaskId = ""; explanationPinned = False; }}
+                    onClose={lambda reason: any -> None { explanationTaskId = ""; explanationPinned = False; if reason == "applied" { fetchTasks(); } }}
+                    onAccept={lambda -> None { explanationTaskId = ""; explanationPinned = False; fetchTasks(); }}
                     onModify={lambda -> None { onOpenDetail(explanationTask); explanationTaskId = ""; explanationPinned = False; }}
                     onReject={lambda -> None { explanationTaskId = ""; explanationPinned = False; }}
                 />
@@ -368,7 +449,96 @@ def:pub CalendarView(
                     >
                         Today
                     </button>
+                    <button
+                        className="cal-nav-rollover"
+                        onClick={lambda -> None { handleRollover(); }}
+                        title="Move all past tasks to this week"
+                    >
+                        <ChevronsRight size={14} />
+                        Roll to this week
+                    </button>
                 </div>
+
+                {(
+                    <div className="cal-rollover-toast">{rolloverToast}</div>
+                ) if rolloverToast != "" else None}
+
+                {(
+                    <div className="cal-replan-panel">
+                        <div className="cal-replan-panel-header">
+                            <AlertTriangle size={16} className="cal-replan-icon" />
+                            <div className="cal-replan-panel-header-content">
+                                <span className="cal-replan-panel-title">
+                                    {"AI Replan — " + pendingCount.toString() + " suggested change" + ("s" if pendingCount != 1 else "")}
+                                </span>
+                                <span className="cal-replan-panel-expl">{replanBannerExplanation}</span>
+                            </div>
+                            <div className="cal-replan-panel-header-btns">
+                                <button
+                                    className="cal-replan-accept-all"
+                                    onClick={lambda -> None { acceptReplan(); }}
+                                >
+                                    Accept All
+                                </button>
+                                <button
+                                    className="cal-replan-dismiss-all"
+                                    onClick={lambda -> None {
+                                        replanBannerChanges = [];
+                                        replanBannerExplanation = "";
+                                        rejectedChangeIds = [];
+                                    }}
+                                >
+                                    Dismiss
+                                </button>
+                            </div>
+                        </div>
+                        <div className="cal-replan-changes-scroll">
+                            {[
+                                <div
+                                    key={change.task_id}
+                                    className={"cal-replan-change-card" + (" cal-replan-change-rejected" if rejectedChangeIds.includes(change.task_id) else "")}
+                                >
+                                    <div className="cal-replan-change-top">
+                                        <span className="cal-replan-change-title">{change.task_title}</span>
+                                    </div>
+                                    <div className="cal-replan-change-times">
+                                        <div className="cal-replan-change-from">
+                                            {(
+                                                formatTimeRange(getOriginalTask(change.task_id).start_time, getOriginalTask(change.task_id).end_time, getOriginalTask(change.task_id).start_date)
+                                            ) if getOriginalTask(change.task_id) != None else "Unscheduled"}
+                                        </div>
+                                        <span className="cal-replan-change-arrow">→</span>
+                                        <div className="cal-replan-change-to">
+                                            {formatTimeRange(change.new_start_time, change.new_end_time, change.new_start_date)}
+                                        </div>
+                                    </div>
+                                    <div className="cal-replan-change-reason">{change.reason}</div>
+                                    {(
+                                        <div className="cal-replan-change-btns">
+                                            <button
+                                                className="cal-replan-change-accept-btn"
+                                                onClick={lambda e: any -> None { e.stopPropagation(); acceptOneChange(change); }}
+                                            >
+                                                <CheckCircle size={13} />
+                                                Accept
+                                            </button>
+                                            <button
+                                                className="cal-replan-change-reject-btn"
+                                                onClick={lambda e: any -> None { e.stopPropagation(); rejectOneChange(change); }}
+                                            >
+                                                <XCircle size={13} />
+                                                Skip
+                                            </button>
+                                        </div>
+                                    ) if not rejectedChangeIds.includes(change.task_id) else (
+                                        <span className="cal-replan-change-skipped-label">Skipped</span>
+                                    )}
+                                </div>
+                                for change in replanBannerChanges
+                            ]}
+                        </div>
+                    </div>
+                ) if len(replanBannerChanges) > 0 else None}
 
                 <div className="cal-day-headers">
                     <div className="cal-time-gutter-head"></div>
@@ -422,7 +592,7 @@ def:pub CalendarView(
                                 {[
                                     <div
                                         key={task.id}
-                                        className={"cal-event " + getPriorityClass(task.priority) + getConfidenceClass(task) + ((" cal-event-locked") if task.is_locked else "") + ((" cal-event-conflict") if conflictingIds.includes(task.id) else "")}
+                                        className={"cal-event " + getPriorityClass(task.priority) + getConfidenceClass(task) + ((" cal-event-locked") if task.is_locked else "") + ((" cal-event-conflict") if conflictingIds.includes(task.id) else "") + ((" cal-event-moving") if isMovingTask(task.id) else "")}
                                         style={{
                                             top: getTaskTop(task),
                                             height: getTaskHeight(task)
@@ -461,6 +631,25 @@ def:pub CalendarView(
                                         </div>
                                     </div>
                                     for task in getTasksForDate(dateStr)
+                                ]}
+
+                                {[
+                                    <div
+                                        key={"ghost-" + change.task_id}
+                                        className="cal-event cal-event-ghost"
+                                        style={{
+                                            top: getGhostTop(change),
+                                            height: getGhostHeight(change)
+                                        }}
+                                        title={"AI proposed: " + change.task_title}
+                                    >
+                                        <div className="cal-event-body">
+                                            <span className="cal-event-title">{change.task_title}</span>
+                                            <span className="cal-event-time">{change.new_start_time + " – " + change.new_end_time}</span>
+                                        </div>
+                                        <span className="cal-event-ghost-badge">AI</span>
+                                    </div>
+                                    for change in getGhostEventsForDate(dateStr)
                                 ]}
                             </div>
                             for dateStr in weekDates

@@ -4,7 +4,7 @@ Combines server-side endpoints with client-side UI.
 """
 
 import from byllm.lib { Model }
-import from datetime { datetime }
+import from datetime { datetime, timedelta }
 
 glob llm = Model(model_name="gpt-4o-mini");
 
@@ -1121,6 +1121,34 @@ walker:priv ApplyReplanChanges {
             }
         }
         report {"applied": True};
+    }
+}
+
+walker:priv RolloverPastTasks {
+    has moved_count: int = 0,
+        moved_titles: list = [];
+
+    can collect with Root entry {
+        visit [-->];
+    }
+
+    can rollover with Task entry {
+        if here.start_date == "" or here.status == "done" or here.is_locked {
+            return;
+        }
+        today_str = datetime.now().date().isoformat();
+        if here.start_date < today_str {
+            d = datetime.fromisoformat(here.start_date);
+            next_week = d + timedelta(days=7);
+            here.start_date = next_week.date().isoformat();
+            here.ai_explanation = "";
+            self.moved_count += 1;
+            self.moved_titles.append(here.title);
+        }
+    }
+
+    can report_moved with Root exit {
+        report {"moved_count": self.moved_count, "moved_titles": self.moved_titles};
     }
 }
 

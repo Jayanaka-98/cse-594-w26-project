@@ -96,6 +96,12 @@ def:pub app -> any {
     can with entry {
         isLoggedIn = jacIsLoggedIn();
         checkingAuth = False;
+        saved = localStorage.getItem("flowboard_view");
+        if saved and saved != "" { view = saved; }
+    }
+
+    can with [view] entry {
+        localStorage.setItem("flowboard_view", view);
     }
 
     can with [isLoggedIn] entry {
