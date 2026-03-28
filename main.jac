@@ -206,15 +206,19 @@ walker:priv DeleteSpace {
 
     can delete_space with Space entry {
         if here.id == self.space_id {
+            visit [-->];
             del here;
             report {"deleted": self.space_id};
         }
     }
 
-    can delete_lists with List entry {
-        if here.space_id == self.space_id {
-            del here;
-        }
+    can delete_list with List entry {
+        visit [-->];
+        del here;
+    }
+
+    can delete_task with Task entry {
+        del here;
     }
 }
 
@@ -225,23 +229,29 @@ walker:priv CreateList {
         space_id: str,
         color: str = "gray";
 
-    can create with Root entry {
-        global list_counter;
-        list_counter += 1;
-        new_id = "list_" + str(list_counter);
-        new_list = here ++> List(
-            id=new_id,
-            name=self.name,
-            space_id=self.space_id,
-            color=self.color
-        );
-        if new_list {
-            report {
-                "id": new_list[0].id,
-                "name": new_list[0].name,
-                "space_id": new_list[0].space_id,
-                "color": new_list[0].color
-            };
+    can find_space with Root entry {
+        visit [-->];
+    }
+
+    can attach_to_space with Space entry {
+        if here.id == self.space_id {
+            global list_counter;
+            list_counter += 1;
+            new_id = "list_" + str(list_counter);
+            new_list = here ++> List(
+                id=new_id,
+                name=self.name,
+                space_id=self.space_id,
+                color=self.color
+            );
+            if new_list {
+                report {
+                    "id": new_list[0].id,
+                    "name": new_list[0].name,
+                    "space_id": new_list[0].space_id,
+                    "color": new_list[0].color
+                };
+            }
         }
     }
 }
@@ -251,6 +261,10 @@ walker:priv ListLists {
         space_id: str = "";
 
     can collect with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
         visit [-->];
     }
 
@@ -277,17 +291,20 @@ walker:priv DeleteList {
         visit [-->];
     }
 
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
     can delete_list with List entry {
         if here.id == self.list_id {
+            visit [-->];
             del here;
             report {"deleted": self.list_id};
         }
     }
 
-    can delete_tasks with Task entry {
-        if here.list_id == self.list_id {
-            del here;
-        }
+    can delete_task with Task entry {
+        del here;
     }
 }
 
@@ -306,46 +323,71 @@ walker:priv CreateTask {
         end_time: str = "",
         estimated_duration: int = 60,
         category: str = "";
+    has created: bool = False;
 
-    can create with Root entry {
-        global task_counter;
-        task_counter += 1;
-        new_id = "task_" + str(task_counter);
-        new_task = here ++> Task(
-            id=new_id,
-            title=self.title,
-            description=self.description,
-            status=self.status,
-            priority=self.priority,
-            due_date=self.due_date,
-            list_id=self.list_id,
-            parent_task_id=self.parent_task_id,
-            start_date=self.start_date,
-            start_time=self.start_time,
-            end_time=self.end_time,
-            estimated_duration=self.estimated_duration,
-            category=self.category
-        );
-        if new_task {
-            report {
-                "id": new_task[0].id,
-                "title": new_task[0].title,
-                "description": new_task[0].description,
-                "status": new_task[0].status,
-                "priority": new_task[0].priority,
-                "due_date": new_task[0].due_date,
-                "list_id": new_task[0].list_id,
-                "parent_task_id": new_task[0].parent_task_id,
-                "start_date": new_task[0].start_date,
-                "start_time": new_task[0].start_time,
-                "end_time": new_task[0].end_time,
-                "estimated_duration": new_task[0].estimated_duration,
-                "actual_duration": new_task[0].actual_duration,
-                "category": new_task[0].category,
-                "is_locked": new_task[0].is_locked,
-                "ai_confidence": new_task[0].ai_confidence,
-                "ai_explanation": new_task[0].ai_explanation
-            };
+    can start with Root entry {
+        if self.list_id == "" {
+            global task_counter;
+            task_counter += 1;
+            new_id = "task_" + str(task_counter);
+            new_task = here ++> Task(
+                id=new_id, title=self.title, description=self.description,
+                status=self.status, priority=self.priority, due_date=self.due_date,
+                list_id=self.list_id, parent_task_id=self.parent_task_id,
+                start_date=self.start_date, start_time=self.start_time, end_time=self.end_time,
+                estimated_duration=self.estimated_duration, category=self.category
+            );
+            if new_task {
+                self.created = True;
+                report {
+                    "id": new_task[0].id, "title": new_task[0].title,
+                    "description": new_task[0].description, "status": new_task[0].status,
+                    "priority": new_task[0].priority, "due_date": new_task[0].due_date,
+                    "list_id": new_task[0].list_id, "parent_task_id": new_task[0].parent_task_id,
+                    "start_date": new_task[0].start_date, "start_time": new_task[0].start_time,
+                    "end_time": new_task[0].end_time, "estimated_duration": new_task[0].estimated_duration,
+                    "actual_duration": new_task[0].actual_duration, "category": new_task[0].category,
+                    "is_locked": new_task[0].is_locked, "ai_confidence": new_task[0].ai_confidence,
+                    "ai_explanation": new_task[0].ai_explanation
+                };
+            }
+        } else {
+            visit [-->];
+        }
+    }
+
+    can pass_space with Space entry {
+        if not self.created {
+            visit [-->];
+        }
+    }
+
+    can attach_to_list with List entry {
+        if not self.created and here.id == self.list_id {
+            global task_counter;
+            task_counter += 1;
+            new_id = "task_" + str(task_counter);
+            new_task = here ++> Task(
+                id=new_id, title=self.title, description=self.description,
+                status=self.status, priority=self.priority, due_date=self.due_date,
+                list_id=self.list_id, parent_task_id=self.parent_task_id,
+                start_date=self.start_date, start_time=self.start_time, end_time=self.end_time,
+                estimated_duration=self.estimated_duration, category=self.category
+            );
+            if new_task {
+                self.created = True;
+                report {
+                    "id": new_task[0].id, "title": new_task[0].title,
+                    "description": new_task[0].description, "status": new_task[0].status,
+                    "priority": new_task[0].priority, "due_date": new_task[0].due_date,
+                    "list_id": new_task[0].list_id, "parent_task_id": new_task[0].parent_task_id,
+                    "start_date": new_task[0].start_date, "start_time": new_task[0].start_time,
+                    "end_time": new_task[0].end_time, "estimated_duration": new_task[0].estimated_duration,
+                    "actual_duration": new_task[0].actual_duration, "category": new_task[0].category,
+                    "is_locked": new_task[0].is_locked, "ai_confidence": new_task[0].ai_confidence,
+                    "ai_explanation": new_task[0].ai_explanation
+                };
+            }
         }
     }
 }
@@ -355,6 +397,14 @@ walker:priv ListTasks {
         list_id: str = "";
 
     can collect with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
         visit [-->];
     }
 
@@ -404,6 +454,14 @@ walker:priv UpdateTask {
         visit [-->];
     }
 
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
     can do_update with Task entry {
         if here.id == self.task_id {
             here.title = self.title;
@@ -443,6 +501,14 @@ walker:priv DeleteTask {
     has task_id: str;
 
     can search with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
         visit [-->];
     }
 
@@ -743,6 +809,14 @@ walker:priv AIScheduleTask {
         visit [-->];
     }
 
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
     can collect with Task entry {
         self.all_task_data.append({
             "id": here.id, "title": here.title,
@@ -807,6 +881,14 @@ walker:priv AIExplainSchedule {
     has target_found: bool = False;
 
     can start with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
         visit [-->];
     }
 
@@ -895,6 +977,14 @@ walker:priv AIGetAlternativeSlots {
         visit [-->];
     }
 
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
     can collect_tasks with Task entry {
         if here.id == self.task_id {
             self.target_found = True;
@@ -959,6 +1049,14 @@ walker:priv AIReplanSchedule {
     has found: bool = False;
 
     can start with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
         visit [-->];
     }
 
@@ -1051,6 +1149,14 @@ walker:priv AIGenerateOverrunAlert {
         visit [-->];
     }
 
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
     can collect_tasks with Task entry {
         if here.id == self.task_id {
             self.target_found = True;
@@ -1096,6 +1202,14 @@ walker:priv UpdateTaskLock {
         visit [-->];
     }
 
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
     can do_update with Task entry {
         if here.id == self.task_id {
             here.is_locked = self.is_locked;
@@ -1108,6 +1222,14 @@ walker:priv ApplyReplanChanges {
     has changes: list;
 
     can search with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
         visit [-->];
     }
 
@@ -1129,6 +1251,14 @@ walker:priv RolloverPastTasks {
         moved_titles: list = [];
 
     can collect with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
         visit [-->];
     }
 
@@ -1206,6 +1336,14 @@ walker:priv FinishTaskTimer {
         report {"task_id": self.task_id, "finished": True, "actual_duration": self.actual_duration};
     }
 
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
     can record_task with Task entry {
         if here.id == self.task_id {
             here.actual_duration = self.actual_duration;
@@ -1257,22 +1395,22 @@ walker:priv SeedDemoData {
         space_counter += 1;
         s2 = here ++> Space(id="space_" + str(space_counter), name="Personal", color="blue");
 
-        # Create lists
+        # Create lists — connect to parent Space
         list_counter += 1;
-        l1 = here ++> List(id="list_" + str(list_counter), name="AI Project", space_id=s1[0].id, color="indigo");
+        l1 = s1[0] ++> List(id="list_" + str(list_counter), name="AI Project", space_id=s1[0].id, color="indigo");
 
         list_counter += 1;
-        l2 = here ++> List(id="list_" + str(list_counter), name="Research", space_id=s1[0].id, color="teal");
+        l2 = s1[0] ++> List(id="list_" + str(list_counter), name="Research", space_id=s1[0].id, color="teal");
 
         list_counter += 1;
-        l3 = here ++> List(id="list_" + str(list_counter), name="Habits", space_id=s2[0].id, color="green");
+        l3 = s2[0] ++> List(id="list_" + str(list_counter), name="Habits", space_id=s2[0].id, color="green");
 
         lid = l1[0].id;
         rid = l2[0].id;
 
-        # Create scheduled tasks for the week of 2026-03-09 to 2026-03-13
+        # Create scheduled tasks — connect to parent List
         task_counter += 1;
-        here ++> Task(
+        l2[0] ++> Task(
             id="task_" + str(task_counter), title="Research AI scheduling algorithms",
             description="Survey existing approaches to AI-driven calendar scheduling and time-boxing.",
             status="todo", priority="high", category="Research", estimated_duration=120,
@@ -1281,7 +1419,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Team standup",
             description="Daily sync with the project team.",
             status="todo", priority="normal", category="Meeting", estimated_duration=30,
@@ -1290,7 +1428,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Design task data model",
             description="Define the Task node fields, edges, and relationships for the scheduling engine.",
             status="todo", priority="high", category="Coding", estimated_duration=90,
@@ -1299,7 +1437,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Write project proposal",
             description="Draft the 3-page proposal covering scope, timeline, and AI features.",
             status="todo", priority="urgent", category="Writing", estimated_duration=150,
@@ -1308,7 +1446,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Code review session",
             description="Review PRs with the team and discuss architectural decisions.",
             status="todo", priority="normal", category="Meeting", estimated_duration=60,
@@ -1317,7 +1455,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Implement AI scheduler walker",
             description="Build the AIScheduleTask walker using byLLM to suggest optimal time slots.",
             status="todo", priority="urgent", category="Coding", estimated_duration=180,
@@ -1326,7 +1464,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l2[0] ++> Task(
             id="task_" + str(task_counter), title="User testing interviews",
             description="Conduct 3 x 40-min moderated sessions with study participants.",
             status="todo", priority="high", category="Research", estimated_duration=120,
@@ -1335,7 +1473,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Update API documentation",
             description="Document all new walker endpoints and their request/response schemas.",
             status="todo", priority="normal", category="Writing", estimated_duration=120,
@@ -1344,7 +1482,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Admin: respond to emails & planning",
             description="Clear inbox and plan next sprint backlog.",
             status="todo", priority="low", category="Admin", estimated_duration=60,
@@ -1353,7 +1491,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Sprint retrospective",
             description="Team retro: what went well, what didn't, action items.",
             status="todo", priority="normal", category="Meeting", estimated_duration=90,
@@ -1363,7 +1501,7 @@ walker:priv SeedDemoData {
 
         # Unscheduled backlog tasks
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Refactor authentication module",
             description="Clean up the auth flow and add proper error handling.",
             status="todo", priority="high", category="Coding", estimated_duration=120,
@@ -1372,7 +1510,7 @@ walker:priv SeedDemoData {
         );
 
         task_counter += 1;
-        here ++> Task(
+        l1[0] ++> Task(
             id="task_" + str(task_counter), title="Set up CI/CD pipeline",
             description="Configure GitHub Actions for automated testing and deployment.",
             status="todo", priority="normal", category="Admin", estimated_duration=90,
@@ -1536,6 +1674,14 @@ walker:priv AIOptimizeSchedule {
     has locked_ids: list = [];
 
     can start with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
         visit [-->];
     }
 
