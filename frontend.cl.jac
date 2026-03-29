@@ -1,12 +1,11 @@
 """FlowBoard - ClickUp-style Project Management Frontend."""
 
 import from "@jac/runtime" { jacSignup, jacLogin, jacLogout, jacIsLoggedIn }
-import from "lucide-react" { Moon, Sun, List, LayoutGrid, Calendar, BarChart2, TrendingUp, X, AlertTriangle, GitMerge }
+import from "lucide-react" { Moon, Sun, List, LayoutGrid, Calendar, BarChart2, TrendingUp, X, AlertTriangle, GitMerge, ChevronLeft, ChevronRight }
 
 import "./styles.css";
 
 import from .components.AuthForm { AuthForm }
-import from .components.Sidebar { Sidebar }
 import from .components.TaskCard { TaskCard }
 import from .components.KanbanBoard { KanbanBoard }
 import from .components.TaskModal { TaskModal }
@@ -16,9 +15,11 @@ import from .components.CalendarView { CalendarView }
 import from .components.GlobalTaskModal { GlobalTaskModal }
 import from .components.DashboardView { DashboardView }
 import from .components.AnalyticsView { AnalyticsView }
-import from .components.ConflictAlertModal { ConflictAlertModal }
+
 import from .components.ModifyScheduleView { ModifyScheduleView }
 import from .components.ChatPanel { ChatPanel }
+import from .components.ConflictResolutionModal { ConflictResolutionModal }
+import from .components.NowWorkingOn { NowWorkingOn }
 
 sv import from main {
     CreateList, ListLists, DeleteList,
@@ -81,7 +82,11 @@ def:pub app -> any {
         # Conflict detection
         conflictsActive: bool = False,
         conflictInfo: dict = {},
-        showConflictModal: bool = False,
+        showConflictResolution: bool = False,
+        conflictReplan: any = None,
+
+        taskToStart: dict = {},
+        leftPanelOpen: bool = True,
         overrunRatios: dict = {},
         aiPlan: any = None,
         aiPlanLoading: bool = False,
@@ -133,7 +138,7 @@ def:pub app -> any {
     def getSelectedList -> dict;
     async def saveTaskChanges -> None;
 
-    def computeConflicts(taskList: list, ratios: dict) -> dict {
+    def computeConflicts(taskList: any, ratios: any) -> dict {
         defaultRatios = {"Coding": 1.42, "Research": 1.35, "Writing": 1.22, "Meeting": 1.08, "Admin": 1.05};
         scheduled = taskList.filter(lambda t: any -> bool {
             return t.start_date != "" and t.start_time != "" and t.status != "done";
@@ -158,8 +163,14 @@ def:pub app -> any {
                 }
             });
         });
+        conflictingTasks = scheduled.filter(lambda t: any -> bool {
+            return conflictingIds.includes(t.id);
+        }).map(lambda t: any -> dict {
+            return {"id": t.id, "title": t.title, "start_date": t.start_date, "start_time": t.start_time, "end_time": t.end_time};
+        });
         return {
             "conflicting_ids": conflictingIds,
+            "conflicting_tasks": conflictingTasks,
             "tasks_affected": len(conflictingIds),
             "total_adjustment_minutes": Math.round(totalOverlapMins / 2)
         };
@@ -236,15 +247,21 @@ def:pub app -> any {
                 </div>
             </div>
             <div className="app-body">
-                <Sidebar
-                    lists={lists}
-                    tasks={tasks}
-                    selectedListId={selectedListId}
-                    listsLoading={listsLoading}
-                    onSelectList={lambda listId: str -> None { selectedListId = listId; showTaskDetail = False; }}
-                    onCreateList={lambda -> None { showCreateList = True; }}
-                    onDeleteList={deleteList}
-                />
+                <div className={"left-panel" + (" left-panel-collapsed" if not leftPanelOpen else "")}>
+                    <button
+                        className="left-panel-toggle"
+                        onClick={lambda -> None { leftPanelOpen = not leftPanelOpen; }}
+                        title={("Collapse panel" if leftPanelOpen else "Expand panel")}
+                    >
+                        {(<ChevronLeft size={16} />) if leftPanelOpen else (<ChevronRight size={16} />)}
+                    </button>
+                    <div className="left-panel-content">
+                        <NowWorkingOn
+                            onTasksChanged={lambda -> None { fetchTasks(); calendarRefreshKey = calendarRefreshKey + 1; }}
+                            taskToStart={taskToStart}
+                        />
+                    </div>
+                </div>
                 <div className="main-content">
                     {(
                         <div className="conflict-banner">
@@ -254,9 +271,9 @@ def:pub app -> any {
                                 {" — Your current schedule has overlapping tasks. "}
                                 <button
                                     className="conflict-banner-link"
-                                    onClick={lambda -> None { showConflictModal = True; }}
+                                    onClick={lambda -> None { showConflictResolution = True; }}
                                 >
-                                    View AI suggestion
+                                    View & resolve
                                 </button>
                                 {" to resolve this conflict."}
                             </span>
@@ -331,6 +348,7 @@ def:pub app -> any {
                             onOpenDetail={openTask}
                             explanationCache={explanationCache}
                             refreshKey={calendarRefreshKey}
+                            externalReplan={conflictReplan}
                         />
                     ) if view == "calendar" else (
                         (
@@ -434,6 +452,7 @@ def:pub app -> any {
                         onAddComment={lambda -> None { addComment(selectedTask.id, commentText); commentText = ""; }}
                         onDeleteComment={deleteComment}
                         onAddSubtask={lambda title: str -> None { createTask(title, "", "todo", "normal", "", selectedTask.id, "", "", "", "", 0); }}
+                        onStartTask={lambda t: dict -> None { taskToStart = t; }}
                     />
                 ) if showTaskDetail else None}
             </div>
@@ -479,16 +498,18 @@ def:pub app -> any {
                     onSave={saveProfile}
                 />
             ) if showProfile else None}
-            {(
-                <ConflictAlertModal
-                    conflictInfo={conflictInfo}
-                    onIgnore={lambda -> None { showConflictModal = False; }}
-                    onViewPlan={lambda -> None { showConflictModal = False; view = "replanning"; }}
-                />
-            ) if showConflictModal else None}
+
             <ChatPanel
                 onTasksChanged={lambda -> None { fetchLists(); fetchTasks(); calendarRefreshKey = calendarRefreshKey + 1; }}
             />
+            {(
+                <ConflictResolutionModal
+                    conflictInfo={conflictInfo}
+                    conflictingTaskIds={conflictInfo["conflicting_ids"] if conflictInfo["conflicting_ids"] else []}
+                    onClose={lambda -> None { showConflictResolution = False; }}
+                    onResolved={lambda result: any -> None { conflictReplan = result; showConflictResolution = False; view = "calendar"; }}
+                />
+            ) if showConflictResolution else None}
         </div>;
 }
 

@@ -1,6 +1,6 @@
 """Conversational AI chat panel for agentic task management."""
 
-sv import from main { AgentChat, AgentCheckReady, AgentExecuteCreate, AgentExecuteUpdate, AgentExecuteDelete, ListChatHistory, ClearChatHistory, AIOptimizeSchedule, ApplyReplanChanges }
+sv import from main { AgentChat, AgentCheckReady, AgentExecuteCreate, AgentExecuteUpdate, AgentExecuteDelete, ListChatHistory, ClearChatHistory, AIOptimizeSchedule, ApplyReplanChanges, AIEstimateDuration }
 import from "lucide-react" { MessageSquare, Send, X, Check, XCircle, Trash2, Bot, User, Search, ChevronDown, ChevronRight }
 import from "react-markdown" { default as Markdown }
 
@@ -111,6 +111,17 @@ def:pub ChatPanel(
                 if readyResult.reports {
                     readiness = readyResult.reports[0];
                     if readiness["ready"] and readiness["action_type"] != "none" and readiness["action_type"] != "" {
+                        extractedDuration = readiness["task_estimated_duration"];
+                        # If no explicit duration was given (0 or default 60), ask AI to estimate
+                        if readiness["action_type"] == "create_task" and (not extractedDuration or extractedDuration == 60) {
+                            estTitle: str = str(readiness["task_title"]) if readiness["task_title"] else "";
+                            estCat: str = str(readiness["task_category"]) if readiness["task_category"] else "";
+                            estResult = root spawn AIEstimateDuration(task_title=estTitle, category=estCat);
+                            if estResult.reports and estResult.reports[0] {
+                                ed = estResult.reports[0];
+                                if ed["suggested_minutes"] { extractedDuration = ed["suggested_minutes"]; }
+                            }
+                        }
                         pendingAction = {
                             "action_type": readiness["action_type"],
                             "target_task_id": readiness["target_task_id"],
@@ -124,7 +135,7 @@ def:pub ChatPanel(
                             "task_start_time": readiness["task_start_time"],
                             "task_end_time": readiness["task_end_time"],
                             "task_category": readiness["task_category"],
-                            "task_estimated_duration": readiness["task_estimated_duration"]
+                            "task_estimated_duration": extractedDuration
                         };
                     }
                 }

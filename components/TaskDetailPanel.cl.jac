@@ -1,6 +1,6 @@
 """Task detail panel - right side panel showing full task details."""
 
-import from "lucide-react" { X, Trash2 }
+import from "lucide-react" { X, Trash2, Play }
 
 def:pub TaskDetailPanel(
     task: dict,
@@ -27,7 +27,8 @@ def:pub TaskDetailPanel(
     onCommentTextChange: any,
     onAddComment: any,
     onDeleteComment: any,
-    onAddSubtask: any
+    onAddSubtask: any,
+    onStartTask: any = None
 ) -> any {
     subtasks = allTasks.filter(
         lambda t: any -> bool { return t.parent_task_id == task.id; }
@@ -138,6 +139,15 @@ def:pub TaskDetailPanel(
                     <button onClick={onSave} className="btn-primary btn-sm">
                         Save Changes
                     </button>
+                    {(
+                        <button
+                            onClick={lambda -> None { onStartTask(task); }}
+                            className="btn-start-task btn-sm"
+                            title="Start working on this task"
+                        >
+                            <Play size={13} /> Start
+                        </button>
+                    ) if onStartTask and task["status"] != "done" else None}
                 </div>
                 <div className="detail-section">
                     <div className="detail-section-header">

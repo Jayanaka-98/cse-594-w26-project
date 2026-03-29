@@ -35,8 +35,17 @@ def:pub TaskModal(
     }
 
     async def fetchAIDuration -> None {
-        # AI duration estimation disabled
-        return;
+        if not title.trim() or not category { return; }
+        isEstimating = True;
+        aiSuggestedMinutes = 0;
+        result = root spawn AIEstimateDuration(task_title=title, category=category);
+        if result.reports and result.reports[0] {
+            d = result.reports[0];
+            if d["suggested_minutes"] { aiSuggestedMinutes = int(d["suggested_minutes"]); }
+            if d["confidence_pct"] { aiSuggestedConfidence = int(d["confidence_pct"]); }
+            if d["rationale"] { aiSuggestedRationale = str(d["rationale"]); }
+        }
+        isEstimating = False;
     }
 
     def handleKeyPress(e: any) -> None {
@@ -44,9 +53,23 @@ def:pub TaskModal(
     }
 
     async def processTranscript(transcript: str) -> None {
-        # AI voice extraction disabled — just set transcript as title
         audioTranscript = transcript;
-        title = transcript;
+        isProcessingAudio = True;
+        result = root spawn AIExtractTaskFromTranscript(transcript=transcript);
+        if result.reports and result.reports[0] {
+            d = result.reports[0];
+            if d["title"] { title = str(d["title"]); }
+            if d["description"] { description = str(d["description"]); }
+            if d["status"] { status = str(d["status"]); }
+            if d["priority"] { priority = str(d["priority"]); }
+            if d["due_date"] { dueDate = str(d["due_date"]); }
+            if d["category"] { category = str(d["category"]); }
+            if d["estimated_duration"] { estimatedDuration = int(d["estimated_duration"]); }
+        } else {
+            title = transcript;
+        }
+        isProcessingAudio = False;
+        fetchAIDuration();
     }
 
     def startRecording -> None {
@@ -96,6 +119,7 @@ def:pub TaskModal(
                                 type="text"
                                 value={title}
                                 onChange={lambda e: any -> None { title = e.target.value; }}
+                                onBlur={lambda -> None { fetchAIDuration(); }}
                                 onKeyPress={handleKeyPress}
                                 placeholder="Task title"
                                 className="form-input task-title-input"

@@ -1,6 +1,6 @@
 """AI Scheduling Explanation Panel — hover/pin panel with 4 tabs and Accept/Modify/Reject."""
 
-sv import from main { AIExplainSchedule, ApplyReplanChanges, AIReplanSchedule, AIGetAlternativeSlots, UpdateTask }
+sv import from main { AIExplainSchedule, ApplyReplanChanges, AIGetAlternativeSlots, UpdateTask }
 import from "lucide-react" { Brain, Pin, PinOff, X, TrendingUp, Sparkles, Flag, Check, Pencil, ArrowLeft, Calendar }
 
 def:pub ExplanationPanel(
@@ -22,11 +22,26 @@ def:pub ExplanationPanel(
         alternativeSlots: list = [];
 
     can with entry {
-        # AI explanation disabled — panel shows static info only
-        loading = False;
+        if cachedData {
+            explanation = cachedData;
+            loading = False;
+        } elif task.ai_explanation and task.ai_explanation != "" {
+            explanation = JSON.parse(task.ai_explanation);
+            loading = False;
+            if onCached { onCached(explanation); }
+        } else {
+            fetchExplanation();
+        }
     }
 
     async def fetchExplanation -> None {
+        loading = True;
+        result = root spawn AIExplainSchedule(task_id=task.id);
+        if result.reports and result.reports[0] {
+            d = result.reports[0];
+            explanation = d;
+            if onCached { onCached(d); }
+        }
         loading = False;
     }
 

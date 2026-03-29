@@ -5,6 +5,7 @@ Combines server-side endpoints with client-side UI.
 
 import from byllm.lib { Model }
 import from datetime { datetime, timedelta }
+import from json { dumps as json_dumps, loads as json_loads }
 
 glob llm = Model(model_name="gpt-4o-mini");
 
@@ -536,6 +537,13 @@ walker:priv UpdateTask {
     can do_update with Task entry {
         if here.id == self.task_id {
             self.old_start_date = here.start_date;
+            # Clear explanation if any scheduling-relevant field changed
+            if (here.start_date != self.start_date or here.start_time != self.start_time
+                    or here.end_time != self.end_time or here.estimated_duration != self.estimated_duration
+                    or here.category != self.category or here.title != self.title) {
+                here.ai_explanation = "";
+                here.ai_confidence = 0;
+            }
             here.title = self.title;
             here.description = self.description;
             here.status = self.status;
@@ -972,6 +980,7 @@ walker:priv AIExplainSchedule {
     has target_start_time: str = "";
     has target_end_time: str = "";
     has target_found: bool = False;
+    has task_node_ref: list = [];
 
     can start with Root entry {
         visit [-->];
@@ -995,6 +1004,7 @@ walker:priv AIExplainSchedule {
             self.target_start_date = here.start_date;
             self.target_start_time = here.start_time;
             self.target_end_time = here.end_time;
+            self.task_node_ref = [here];
         } elif here.start_date != "" and here.start_time != "" {
             self.surrounding.append({
                 "title": here.title,
@@ -1039,7 +1049,7 @@ walker:priv AIExplainSchedule {
             due_date=self.target_due_date,
             surrounding_tasks=self.surrounding
         );
-        report {
+        result_dict = {
             "headline": explanation.headline,
             "workload_insight": explanation.workload_insight,
             "duration_insight": explanation.duration_insight,
@@ -1051,6 +1061,103 @@ walker:priv AIExplainSchedule {
             "tip": explanation.tip,
             "factors": [{"factor": f.factor, "score": f.score} for f in explanation.factors]
         };
+        # Persist explanation to Task node so future hovers are instant
+        if self.task_node_ref {
+            self.task_node_ref[0].ai_explanation = json_dumps(result_dict);
+            self.task_node_ref[0].ai_confidence = explanation.productivity_score;
+        }
+        report result_dict;
+    }
+}
+
+walker:priv GenerateAllExplanations {
+    has task_node_refs: list = [];
+    has task_data_list: list = [];
+    has surrounding: list = [];
+    has user_peaks: dict = {};
+    has cat_ratios: dict = {};
+    has generated: int = 0;
+
+    can start with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
+    can collect with Task entry {
+        if here.start_date != "" and here.start_time != "" and here.status != "done" {
+            self.surrounding.append({
+                "title": here.title,
+                "start_time": here.start_time,
+                "end_time": here.end_time
+            });
+            if here.ai_explanation == "" and len(self.task_data_list) < 5 {
+                self.task_node_refs.append(here);
+                self.task_data_list.append({
+                    "title": here.title,
+                    "category": here.category,
+                    "estimated_duration": here.estimated_duration,
+                    "due_date": here.due_date,
+                    "start_date": here.start_date,
+                    "start_time": here.start_time,
+                    "end_time": here.end_time
+                });
+            }
+        }
+    }
+
+    can collect_patterns with UserPatterns entry {
+        self.user_peaks = here.productivity_peaks;
+        self.cat_ratios = here.category_overrun_ratios;
+    }
+
+    can finalize with Root exit {
+        for i in range(len(self.task_data_list)) {
+            t = self.task_data_list[i];
+            task_node = self.task_node_refs[i];
+            overrun_ratio = self.cat_ratios.get(t["category"], 1.0) if t["category"] != "" else 1.0;
+            slot_dict = {
+                "start_date": t["start_date"],
+                "start_time": t["start_time"],
+                "end_time": t["end_time"]
+            };
+            surrounding_others = [
+                s for s in self.surrounding
+                if not (s["start_time"] == t["start_time"] and s["title"] == t["title"])
+            ];
+            explanation = generate_schedule_explanation(
+                task_title=t["title"],
+                category=t["category"],
+                scheduled_slot=slot_dict,
+                user_estimated_duration=t["estimated_duration"],
+                historical_overrun_ratio=overrun_ratio,
+                productivity_peaks=self.user_peaks,
+                due_date=t["due_date"],
+                surrounding_tasks=surrounding_others
+            );
+            result_dict = {
+                "headline": explanation.headline,
+                "workload_insight": explanation.workload_insight,
+                "duration_insight": explanation.duration_insight,
+                "deadline_insight": explanation.deadline_insight,
+                "productivity_score": explanation.productivity_score,
+                "ai_adjusted_duration": explanation.ai_adjusted_duration,
+                "historical_accuracy_pct": explanation.historical_accuracy_pct,
+                "user_estimated_duration": t["estimated_duration"],
+                "tip": explanation.tip,
+                "factors": [{"factor": f.factor, "score": f.score} for f in explanation.factors]
+            };
+            task_node.ai_explanation = json_dumps(result_dict);
+            task_node.ai_confidence = explanation.productivity_score;
+            self.generated += 1;
+        }
+        report {"generated": self.generated};
     }
 }
 
@@ -1311,6 +1418,78 @@ walker:priv UpdateTaskLock {
     }
 }
 
+walker:priv AIRescheduleTask {
+    has task_id: str,
+        locked_task_ids: list = [];
+    has all_tasks: list = [];
+    has target_task: dict = {};
+    has target_found: bool = False;
+
+    can start with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
+    can collect with Task entry {
+        if here.start_date != "" and here.start_time != "" and here.status != "done" {
+            td = {
+                "id": here.id, "title": here.title,
+                "start_date": here.start_date, "start_time": here.start_time,
+                "end_time": here.end_time, "priority": here.priority,
+                "is_locked": here.is_locked, "estimated_duration": here.estimated_duration
+            };
+            self.all_tasks.append(td);
+            if here.id == self.task_id {
+                self.target_found = True;
+                self.target_task = {
+                    "id": here.id, "title": here.title,
+                    "start_date": here.start_date, "start_time": here.start_time,
+                    "end_time": here.end_time, "priority": here.priority,
+                    "estimated_duration": here.estimated_duration
+                };
+            }
+            if here.is_locked {
+                self.locked_task_ids.append(here.id);
+            }
+        }
+    }
+
+    can finalize with Root exit {
+        if not self.target_found {
+            report {"has_conflict": False, "changes": [], "explanation": "Task not found or not scheduled."};
+            return;
+        }
+        other_tasks = [t for t in self.all_tasks if t["id"] != self.task_id];
+        proposal = detect_schedule_conflicts_and_replan(
+            new_task=self.target_task,
+            current_schedule=other_tasks,
+            locked_task_ids=self.locked_task_ids
+        );
+        report {
+            "has_conflict": proposal.has_conflict,
+            "explanation": proposal.explanation,
+            "changes": [
+                {
+                    "task_id": c.task_id,
+                    "task_title": c.task_title,
+                    "new_start_date": c.new_start_date,
+                    "new_start_time": c.new_start_time,
+                    "new_end_time": c.new_end_time,
+                    "reason": c.reason
+                }
+                for c in proposal.changes
+            ]
+        };
+    }
+}
+
 walker:priv ApplyReplanChanges {
     has changes: list;
 
@@ -1375,6 +1554,56 @@ walker:priv RolloverPastTasks {
     }
 }
 
+walker:priv GetActiveTask {
+    has active_id: str = "";
+    has active_task: dict = {};
+    has timer_start: str = "";
+    has timer_accumulated: int = 0;
+
+    can start with Root entry {
+        visit [-->];
+    }
+
+    can read_patterns with UserPatterns entry {
+        self.active_id = here.active_task_id;
+        self.timer_start = here.timer_start;
+        self.timer_accumulated = here.timer_accumulated;
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
+    can find_task with Task entry {
+        if here.id == self.active_id {
+            self.active_task = {
+                "id": here.id, "title": here.title,
+                "category": here.category, "estimated_duration": here.estimated_duration,
+                "start_date": here.start_date, "start_time": here.start_time,
+                "end_time": here.end_time, "priority": here.priority
+            };
+        }
+    }
+
+    can finalize with Root exit {
+        if self.active_id == "" or len(self.active_task) == 0 {
+            report {"active": False};
+            return;
+        }
+        report {
+            "active": True,
+            "task": self.active_task,
+            "timer_start": self.timer_start,
+            "timer_accumulated": self.timer_accumulated
+        };
+    }
+}
+
 walker:priv StartTaskTimer {
     has task_id: str;
 
@@ -1426,6 +1655,8 @@ walker:priv FinishTaskTimer {
     can run with Root entry {
         global task_history_counter;
         visit [-->];
+        # Background analysis — update user patterns after each task finish
+        root spawn AnalyzeUserPatterns();
         report {"task_id": self.task_id, "finished": True, "actual_duration": self.actual_duration};
     }
 
@@ -1460,6 +1691,62 @@ walker:priv FinishTaskTimer {
         here.active_task_id = "";
         here.timer_start = "";
         here.timer_accumulated = 0;
+    }
+}
+
+walker:priv AnalyzeUserPatterns {
+    has history: list = [];
+    has patterns_node: any = None;
+
+    can start with Root entry {
+        visit [-->];
+    }
+
+    can collect_history with TaskHistory entry {
+        if here.estimated_duration > 0 and here.actual_duration > 0 {
+            self.history.append({
+                "category": here.category,
+                "estimated": here.estimated_duration,
+                "actual": here.actual_duration
+            });
+        }
+    }
+
+    can find_patterns with UserPatterns entry {
+        self.patterns_node = here;
+    }
+
+    can finalize with Root exit {
+        if len(self.history) == 0 { return; }
+
+        # Compute mean actual/estimated ratio per category
+        cat_sums: dict = {};
+        cat_counts: dict = {};
+        for h in self.history {
+            cat = h["category"] if h["category"] else "Other";
+            if cat not in cat_sums {
+                cat_sums[cat] = 0.0;
+                cat_counts[cat] = 0;
+            }
+            cat_sums[cat] = cat_sums[cat] + (h["actual"] / h["estimated"]);
+            cat_counts[cat] = cat_counts[cat] + 1;
+        }
+        new_ratios: dict = {};
+        for cat in cat_sums {
+            new_ratios[cat] = round(cat_sums[cat] / cat_counts[cat], 2);
+        }
+
+        # Persist — update existing node or create one
+        if self.patterns_node {
+            self.patterns_node.category_overrun_ratios = new_ratios;
+            self.patterns_node.last_updated = datetime.now().isoformat();
+        } else {
+            root ++> UserPatterns(
+                category_overrun_ratios=new_ratios,
+                last_updated=datetime.now().isoformat()
+            );
+        }
+        report {"updated": True, "ratios": new_ratios};
     }
 }
 
@@ -1724,6 +2011,58 @@ walker:priv UpdateUserPatterns {
     }
 }
 
+# ===== SCHEDULE CONFLICT HELPERS =====
+
+def detect_conflicts_with_overrun(tasks: list) -> list {
+    default_ratios = {"Coding": 1.42, "Research": 1.35, "Writing": 1.22, "Meeting": 1.08, "Admin": 1.05};
+    conflicting_ids = [];
+    scheduled = [t for t in tasks if t.get("start_date") and t.get("start_time") and t.get("status", "") != "done"];
+    for a in scheduled {
+        for b in scheduled {
+            if a["id"] == b["id"] { continue; }
+            if a["start_date"] != b["start_date"] { continue; }
+            pa = a["start_time"].split(":");
+            a_start = int(pa[0]) * 60 + int(pa[1]);
+            a_dur = a.get("estimated_duration") or 60;
+            a_ratio = default_ratios.get(a.get("category", ""), 1.1);
+            a_end = a_start + int(a_dur * a_ratio + 0.5);
+            pb = b["start_time"].split(":");
+            b_start = int(pb[0]) * 60 + int(pb[1]);
+            b_dur = b.get("estimated_duration") or 60;
+            b_ratio = default_ratios.get(b.get("category", ""), 1.1);
+            b_end = b_start + int(b_dur * b_ratio + 0.5);
+            if a_start < b_end and b_start < a_end {
+                if a["id"] not in conflicting_ids { conflicting_ids.append(a["id"]); }
+            }
+        }
+    }
+    return conflicting_ids;
+}
+
+def compute_blocked_slots(tasks: list, movable_ids: list) -> list {
+    # Include effective windows of ALL tasks NOT being rescheduled this pass
+    # so the LLM knows every occupied slot and can avoid placing tasks there
+    default_ratios = {"Coding": 1.42, "Research": 1.35, "Writing": 1.22, "Meeting": 1.08, "Admin": 1.05};
+    blocked = [];
+    for t in tasks {
+        if t["id"] in movable_ids { continue; }
+        if not t.get("start_date") or not t.get("start_time") { continue; }
+        p = t["start_time"].split(":");
+        start_mins = int(p[0]) * 60 + int(p[1]);
+        dur = t.get("estimated_duration") or 60;
+        ratio = default_ratios.get(t.get("category", ""), 1.1);
+        eff_end_mins = start_mins + int(dur * ratio + 0.5);
+        eff_end_str = str(eff_end_mins // 60).zfill(2) + ":" + str(eff_end_mins % 60).zfill(2);
+        blocked.append({
+            "task_id": t["id"], "title": t["title"],
+            "date": t["start_date"], "start_time": t["start_time"],
+            "effective_end_time": eff_end_str,
+            "is_locked": t.get("is_locked", False)
+        });
+    }
+    return blocked;
+}
+
 # ===== AI SCHEDULE OPTIMIZATION — BYLLM =====
 
 obj OptimizationPoint {
@@ -1750,15 +2089,19 @@ def optimize_conflicted_schedule(
     current_schedule: list[dict],
     conflicting_task_ids: list[str],
     locked_task_ids: list[str],
+    blocked_slots: list[dict],
     user_productivity_peaks: dict
 ) -> ScheduleOptimization by llm(temperature=0.2);
-sem optimize_conflicted_schedule = "Generate an optimized schedule that resolves all detected time conflicts while aligning tasks with the user's peak productivity hours. Group similar tasks together to minimize context-switching, respect locked tasks, schedule urgent/high-priority tasks during peak hours, and provide clear numbered optimization points explaining each key decision.";
-sem optimize_conflicted_schedule.current_schedule = "All currently scheduled tasks with id, title, start_date, start_time, end_time, priority, is_locked, category, estimated_duration fields";
-sem optimize_conflicted_schedule.conflicting_task_ids = "IDs of tasks that currently have time overlaps that must be resolved";
+sem optimize_conflicted_schedule = "Reschedule ONLY the tasks in conflicting_task_ids so that none of their effective time windows overlap with each other or with any entry in blocked_slots. A task's effective window is [start_time, start_time + estimated_duration * overrun_ratio] where overrun_ratios are Coding=1.42, Research=1.35, Writing=1.22, Meeting=1.08, Admin=1.05, others=1.1. For each conflicting task, pick a new start_time such that its effective window [new_start, new_start + estimated_duration * ratio] does not overlap with ANY blocked_slot's [start_time, effective_end_time] on the same date. Also ensure the conflicting tasks do not overlap with each other after rescheduling. Align with user productivity peaks and group similar categories where possible.";
+sem optimize_conflicted_schedule.current_schedule = "All scheduled tasks. Only move tasks whose id is in conflicting_task_ids — all others stay fixed.";
+sem optimize_conflicted_schedule.conflicting_task_ids = "Exactly these task IDs must be rescheduled. Do not move any task not in this list.";
+sem optimize_conflicted_schedule.blocked_slots = "HARD CONSTRAINTS: occupied windows of every non-conflicting task, including overrun. Each entry has start_time and effective_end_time on a given date. No rescheduled task's effective window may overlap any of these. is_locked=true entries are especially critical.";
 sem optimize_conflicted_schedule.user_productivity_peaks = "Dict mapping hour (0-23 as string keys) to productivity score (0-100). Use this to place demanding tasks in high-score slots.";
 
 walker:priv AIOptimizeSchedule {
     has conflicting_task_ids: list;
+    has date_range: list = [];
+    has optimize_only_ids: list = [];
     has all_tasks: list = [];
     has user_peaks: dict = {};
     has locked_ids: list = [];
@@ -1777,6 +2120,9 @@ walker:priv AIOptimizeSchedule {
 
     can collect_tasks with Task entry {
         if here.start_date != "" and here.start_time != "" and here.status != "done" {
+            if len(self.date_range) > 0 and here.start_date not in self.date_range {
+                return;
+            }
             self.all_tasks.append({
                 "id": here.id, "title": here.title,
                 "start_date": here.start_date, "start_time": here.start_time,
@@ -1785,6 +2131,8 @@ walker:priv AIOptimizeSchedule {
                 "estimated_duration": here.estimated_duration
             });
             if here.is_locked {
+                self.locked_ids.append(here.id);
+            } elif len(self.optimize_only_ids) > 0 and here.id not in self.optimize_only_ids {
                 self.locked_ids.append(here.id);
             }
         }
@@ -1805,31 +2153,69 @@ walker:priv AIOptimizeSchedule {
             };
             return;
         }
-        optimization = optimize_conflicted_schedule(
-            current_schedule=self.all_tasks,
-            conflicting_task_ids=self.conflicting_task_ids,
-            locked_task_ids=self.locked_ids,
-            user_productivity_peaks=self.user_peaks
-        );
+
+        MAX_ITER = 3;
+        virtual_schedule = [dict(t) for t in self.all_tasks];
+        current_conflict_ids = list(self.conflicting_task_ids);
+        merged_changes = {};
+        final_overview = "";
+        final_optimizations = [];
+
+        for iteration in range(MAX_ITER) {
+            if len(current_conflict_ids) == 0 { break; }
+            blocked = compute_blocked_slots(virtual_schedule, current_conflict_ids);
+            optimization = optimize_conflicted_schedule(
+                current_schedule=virtual_schedule,
+                conflicting_task_ids=current_conflict_ids,
+                locked_task_ids=self.locked_ids,
+                blocked_slots=blocked,
+                user_productivity_peaks=self.user_peaks
+            );
+            if iteration == 0 {
+                final_overview = optimization.overview;
+                final_optimizations = optimization.optimizations;
+            }
+            for change in optimization.changes {
+                cid = change.task_id;
+                merged_changes[cid] = {
+                    "task_id": cid,
+                    "task_title": change.task_title,
+                    "new_start_date": change.new_start_date,
+                    "new_start_time": change.new_start_time,
+                    "new_end_time": change.new_end_time,
+                    "reason": change.reason
+                };
+                for t in virtual_schedule {
+                    if t["id"] == cid and not t.get("is_locked", False) {
+                        t["start_date"] = change.new_start_date;
+                        t["start_time"] = change.new_start_time;
+                        t["end_time"] = change.new_end_time;
+                    }
+                }
+            }
+            current_conflict_ids = detect_conflicts_with_overrun(virtual_schedule);
+        }
+
+        total_mins = 0;
+        for t in virtual_schedule {
+            if t.get("start_time") and t.get("end_time") {
+                tp = t["start_time"].split(":");
+                ep = t["end_time"].split(":");
+                t_start = int(tp[0]) * 60 + int(tp[1]);
+                t_end = int(ep[0]) * 60 + int(ep[1]);
+                if t_end > t_start { total_mins += t_end - t_start; }
+            }
+        }
+
         report {
-            "overview": optimization.overview,
+            "overview": final_overview,
             "optimizations": [
                 {"title": o.title, "description": o.description}
-                for o in optimization.optimizations
+                for o in final_optimizations
             ],
-            "changes": [
-                {
-                    "task_id": c.task_id,
-                    "task_title": c.task_title,
-                    "new_start_date": c.new_start_date,
-                    "new_start_time": c.new_start_time,
-                    "new_end_time": c.new_end_time,
-                    "reason": c.reason
-                }
-                for c in optimization.changes
-            ],
-            "all_conflicts_resolved": optimization.all_conflicts_resolved,
-            "total_minutes": optimization.total_minutes
+            "changes": list(merged_changes.values()),
+            "all_conflicts_resolved": len(current_conflict_ids) == 0,
+            "total_minutes": total_mins
         };
     }
 }

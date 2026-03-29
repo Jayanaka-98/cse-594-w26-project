@@ -1,14 +1,15 @@
 """Calendar view with week grid, unscheduled sidebar, drag-and-drop scheduling, and resize."""
 
-sv import from main { ListTasks, ListTasksForDate, UpdateTaskLock, AIReplanSchedule, ApplyReplanChanges, RolloverPastTasks }
+sv import from main { ListTasks, ListTasksForDate, UpdateTaskLock, AIOptimizeSchedule, ApplyReplanChanges, RolloverPastTasks }
 import from .ExplanationPanel { ExplanationPanel }
-import from "lucide-react" { Lock, LockOpen, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle, XCircle, ChevronsRight }
+import from "lucide-react" { Lock, LockOpen, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle, XCircle, ChevronsRight, Zap }
 
 def:pub CalendarView(
     onUpdateTask: any,
     onOpenDetail: any,
     explanationCache: dict,
-    refreshKey: int = 0
+    refreshKey: int = 0,
+    externalReplan: any = None
 ) -> any {
     has weekOffset: int = 0,
         weekDates: list = [],
@@ -18,18 +19,25 @@ def:pub CalendarView(
         resizingTaskId: str = "",
         resizeStartY: int = 0,
         resizeOriginalEnd: str = "",
+        resizeOriginalStart: str = "",
         resizeCurrentEndTime: str = "",
         explanationTaskId: str = "",
-        explanationPinned: bool = False,
         conflictingIds: list = [],
         replanBannerChanges: list = [],
         replanBannerExplanation: str = "",
         rejectedChangeIds: list = [],
-        rolloverToast: str = "";
+        rolloverToast: str = "",
+        aiOptimizeLoading: bool = False,
+        firstLoad: bool = True,
+        draggingGhostTaskId: str = "",
+        resizingGhostTaskId: str = "",
+        ghostResizeStartY: int = 0,
+        ghostResizeOriginalEnd: str = "",
+        ghostResizeOriginalStart: str = "",
+        ghostResizeCurrentEndTime: str = "";
 
     can with entry {
         fetchTasks();
-        scrollToNow();
     }
 
     can with [weekOffset] entry {
@@ -40,6 +48,14 @@ def:pub CalendarView(
         if refreshKey > 0 { fetchTasks(); }
     }
 
+    can with [externalReplan] entry {
+        if externalReplan and externalReplan["changes"] {
+            replanBannerChanges = externalReplan["changes"];
+            replanBannerExplanation = externalReplan["overview"] if externalReplan["overview"] else "";
+            rejectedChangeIds = [];
+        }
+    }
+
     async def fetchTasks -> None {
         el = document.querySelector(".cal-grid-scroll");
         prevScroll = el.scrollTop if el else -1;
@@ -47,7 +63,10 @@ def:pub CalendarView(
         loaded = result.reports[0] if result.reports else [];
         internalTasks = loaded;
         conflictingIds = computeLocalConflicts(loaded);
-        if prevScroll >= 0 {
+        if firstLoad {
+            firstLoad = False;
+            scrollToNow();
+        } elif prevScroll >= 0 {
             setTimeout(lambda -> None {
                 el2 = document.querySelector(".cal-grid-scroll");
                 if el2 { el2.scrollTop = prevScroll; }
@@ -83,7 +102,7 @@ def:pub CalendarView(
 
     def scrollToNow -> None {
         el = document.querySelector(".cal-grid-scroll");
-        if el { el.scrollTop = 120; }
+        if el { el.scrollTop = 480; }
     }
 
     def computeWeekDates -> None {
@@ -140,8 +159,7 @@ def:pub CalendarView(
 
     def getTaskTop(task: any) -> str {
         startMins = timeToMins(task.start_time);
-        top = Math.max(0, startMins - 360);
-        return top.toString() + "px";
+        return startMins.toString() + "px";
     }
 
     def getTaskHeight(task: any) -> str {
@@ -165,6 +183,35 @@ def:pub CalendarView(
 
     async def handleDrop(e: any, dateStr: str) -> None {
         e.preventDefault();
+        if draggingGhostTaskId != "" {
+            colEl = e.currentTarget;
+            rect = colEl.getBoundingClientRect();
+            relY = Math.max(0, e.clientY - rect.top);
+            snapped = Math.floor(relY / 15) * 15;
+            ghostId = draggingGhostTaskId;
+            draggingGhostTaskId = "";
+            ghostMatches = replanBannerChanges.filter(lambda c: any -> bool { return c.task_id == ghostId; });
+            if len(ghostMatches) > 0 {
+                gc = ghostMatches[0];
+                origStart = timeToMins(gc.new_start_time);
+                origEnd = timeToMins(gc.new_end_time);
+                dur = (origEnd - origStart) if (origEnd > origStart) else 60;
+                newStartMins = snapped;
+                newEndMins = Math.min(23 * 60 + 59, newStartMins + dur);
+                st = minsToTime(newStartMins);
+                et = minsToTime(newEndMins);
+                updatedChanges = [];
+                replanBannerChanges.forEach(lambda c: any -> None {
+                    if c.task_id == ghostId {
+                        updatedChanges.append({"task_id": c.task_id, "task_title": c.task_title, "new_start_date": dateStr, "new_start_time": st, "new_end_time": et, "reason": c.reason});
+                    } else {
+                        updatedChanges.append(c);
+                    }
+                });
+                replanBannerChanges = updatedChanges;
+            }
+            return;
+        }
         if draggingTaskId == "" { return; }
         matches = internalTasks.filter(lambda t: any -> bool { return t.id == draggingTaskId; });
         if len(matches) == 0 { draggingTaskId = ""; return; }
@@ -173,8 +220,8 @@ def:pub CalendarView(
         rect = colEl.getBoundingClientRect();
         relY = Math.max(0, e.clientY - rect.top);
         snapped = Math.floor(relY / 15) * 15;
-        startTotalMins = 360 + snapped;
-        startH = Math.min(22, Math.floor(startTotalMins / 60));
+        startTotalMins = snapped;
+        startH = Math.min(23, Math.floor(startTotalMins / 60));
         startM = startTotalMins % 60;
         endTotalMins = startH * 60 + startM + 60;
         endH = Math.min(23, Math.floor(endTotalMins / 60));
@@ -192,31 +239,73 @@ def:pub CalendarView(
         resizingTaskId = task.id;
         resizeStartY = e.clientY;
         resizeOriginalEnd = task.end_time;
+        resizeOriginalStart = task.start_time;
         resizeCurrentEndTime = task.end_time;
     }
 
+    def startGhostResize(e: any, change: any) -> None {
+        e.preventDefault();
+        e.stopPropagation();
+        resizingGhostTaskId = change.task_id;
+        ghostResizeStartY = e.clientY;
+        ghostResizeOriginalEnd = change.new_end_time;
+        ghostResizeOriginalStart = change.new_start_time;
+        ghostResizeCurrentEndTime = change.new_end_time;
+    }
+
     def handleResizeMove(e: any) -> None {
-        if resizingTaskId == "" { return; }
-        deltaY = e.clientY - resizeStartY;
-        deltaMins = Math.round(deltaY / 15) * 15;
-        origEndMins = timeToMins(resizeOriginalEnd);
-        newEndMins = Math.max(origEndMins + 15, origEndMins + deltaMins);
-        newEndMins = Math.min(23 * 60, newEndMins);
-        resizeCurrentEndTime = minsToTime(newEndMins);
+        if resizingTaskId != "" {
+            deltaY = e.clientY - resizeStartY;
+            deltaMins = Math.round(deltaY / 15) * 15;
+            origEndMins = timeToMins(resizeOriginalEnd);
+            startMins = timeToMins(resizeOriginalStart);
+            newEndMins = Math.max(startMins + 15, origEndMins + deltaMins);
+            newEndMins = Math.min(23 * 60 + 59, newEndMins);
+            resizeCurrentEndTime = minsToTime(newEndMins);
+        } elif resizingGhostTaskId != "" {
+            deltaY = e.clientY - ghostResizeStartY;
+            deltaMins = Math.round(deltaY / 15) * 15;
+            origEndMins = timeToMins(ghostResizeOriginalEnd);
+            startMins = timeToMins(ghostResizeOriginalStart);
+            newEndMins = Math.max(startMins + 15, origEndMins + deltaMins);
+            newEndMins = Math.min(23 * 60 + 59, newEndMins);
+            ghostResizeCurrentEndTime = minsToTime(newEndMins);
+        }
     }
 
     async def handleResizeEnd(e: any) -> None {
-        if resizingTaskId == "" { return; }
-        matches = internalTasks.filter(lambda t: any -> bool { return t.id == resizingTaskId; });
-        if len(matches) > 0 and resizeCurrentEndTime != "" {
-            task = matches[0];
-            await onUpdateTask(task.id, task.title, task.description, task.status, task.priority, task.due_date, task.start_date, task.start_time, resizeCurrentEndTime);
+        if resizingTaskId != "" {
+            matches = internalTasks.filter(lambda t: any -> bool { return t.id == resizingTaskId; });
+            if len(matches) > 0 and resizeCurrentEndTime != "" {
+                task = matches[0];
+                await onUpdateTask(task.id, task.title, task.description, task.status, task.priority, task.due_date, task.start_date, task.start_time, resizeCurrentEndTime);
+                await fetchTasks();
+            }
+            # Clear after backend sync — height stays correct during network round-trip
+            resizingTaskId = "";
+            resizeStartY = 0;
+            resizeOriginalEnd = "";
+            resizeCurrentEndTime = "";
+        } elif resizingGhostTaskId != "" {
+            if ghostResizeCurrentEndTime != "" {
+                gId = resizingGhostTaskId;
+                gEnd = ghostResizeCurrentEndTime;
+                updatedChanges = [];
+                replanBannerChanges.forEach(lambda c: any -> None {
+                    if c.task_id == gId {
+                        updatedChanges.append({"task_id": c.task_id, "task_title": c.task_title, "new_start_date": c.new_start_date, "new_start_time": c.new_start_time, "new_end_time": gEnd, "reason": c.reason});
+                    } else {
+                        updatedChanges.append(c);
+                    }
+                });
+                replanBannerChanges = updatedChanges;
+            }
+            resizingGhostTaskId = "";
+            ghostResizeStartY = 0;
+            ghostResizeOriginalEnd = "";
+            ghostResizeOriginalStart = "";
+            ghostResizeCurrentEndTime = "";
         }
-        resizingTaskId = "";
-        resizeStartY = 0;
-        resizeOriginalEnd = "";
-        resizeCurrentEndTime = "";
-        await fetchTasks();
     }
 
     def formatHourLabel(h: int) -> str {
@@ -240,12 +329,10 @@ def:pub CalendarView(
     }
 
     def handleTaskClick(task: any) -> None {
-        if explanationTaskId == task.id and explanationPinned {
+        if explanationTaskId == task.id {
             explanationTaskId = "";
-            explanationPinned = False;
         } else {
             explanationTaskId = task.id;
-            explanationPinned = True;
         }
     }
 
@@ -256,14 +343,19 @@ def:pub CalendarView(
     }
 
     async def handleRollover -> None {
-        result = root spawn RolloverPastTasks();
-        if result.reports {
-            data = result.reports[0];
-            count = data["moved_count"] if data["moved_count"] else 0;
-            rolloverToast = count.toString() + " task" + ("s" if count != 1 else "") + " moved to this week";
-            setTimeout(lambda -> None { rolloverToast = ""; }, 3500);
+        try {
+            result = root spawn RolloverPastTasks();
+            if result.reports {
+                data = result.reports[0];
+                count = data["moved_count"] if data["moved_count"] else 0;
+                rolloverToast = count.toString() + " task" + ("s" if count != 1 else "") + " moved to this week";
+                setTimeout(lambda -> None { rolloverToast = ""; }, 3500);
+            }
+            await fetchTasks();
+        } except err {
+            rolloverToast = "Rollover failed – try again";
+            setTimeout(lambda -> None { rolloverToast = ""; }, 3000);
         }
-        await fetchTasks();
     }
 
     async def acceptReplan -> None {
@@ -297,13 +389,13 @@ def:pub CalendarView(
 
     def getGhostTop(change: any) -> str {
         startMins = timeToMins(change.new_start_time);
-        top = Math.max(0, startMins - 360);
-        return top.toString() + "px";
+        return startMins.toString() + "px";
     }
 
     def getGhostHeight(change: any) -> str {
         startMins = timeToMins(change.new_start_time);
-        endMins = timeToMins(change.new_end_time);
+        endTimeStr = (ghostResizeCurrentEndTime if (resizingGhostTaskId == change.task_id and ghostResizeCurrentEndTime != "") else change.new_end_time);
+        endMins = timeToMins(endTimeStr);
         if endMins <= startMins { endMins = startMins + 60; }
         h = Math.max(30, endMins - startMins);
         return h.toString() + "px";
@@ -343,7 +435,23 @@ def:pub CalendarView(
         return startTime + " – " + endTime + "  ·  " + dateStr;
     }
 
-    hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+    async def runOptimize -> None {
+        aiOptimizeLoading = True;
+        replanBannerChanges = [];
+        replanBannerExplanation = "";
+        rejectedChangeIds = [];
+        result = root spawn AIOptimizeSchedule(conflicting_task_ids=conflictingIds, date_range=weekDates);
+        if result.reports and result.reports[0] {
+            d = result.reports[0];
+            changes = d["changes"] if d["changes"] else [];
+            explanation = d["overview"] if d["overview"] else "";
+            replanBannerChanges = changes;
+            replanBannerExplanation = explanation;
+        }
+        aiOptimizeLoading = False;
+    }
+
+    hours = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
     unscheduled = getUnscheduledTasks();
 
     explanationTaskMatches = internalTasks.filter(lambda t: any -> bool { return t.id == explanationTaskId; });
@@ -359,19 +467,21 @@ def:pub CalendarView(
                     onMouseMove={handleResizeMove}
                     onMouseUp={handleResizeEnd}
                 />
-            ) if resizingTaskId != "" else None}
+            ) if resizingTaskId != "" or resizingGhostTaskId != "" else None}
 
             {(
-                <ExplanationPanel
-                    key={explanationTaskId}
-                    task={explanationTask}
-                    cachedData={explanationCache[explanationTaskId] if explanationCache[explanationTaskId] else None}
-                    onCached={lambda data: any -> None { explanationCache[explanationTaskId] = data; }}
-                    onClose={lambda reason: any -> None { explanationTaskId = ""; explanationPinned = False; if reason == "applied" { fetchTasks(); } }}
-                    onAccept={lambda -> None { explanationTaskId = ""; explanationPinned = False; fetchTasks(); }}
-                    onModify={lambda -> None { onOpenDetail(explanationTask); explanationTaskId = ""; explanationPinned = False; }}
-                    onReject={lambda -> None { explanationTaskId = ""; explanationPinned = False; }}
-                />
+                <div className="cal-explanation-wrapper">
+                    <ExplanationPanel
+                        key={explanationTaskId}
+                        task={explanationTask}
+                        cachedData={explanationCache[explanationTaskId] if explanationCache[explanationTaskId] else None}
+                        onCached={lambda data: any -> None { explanationCache[explanationTaskId] = data; }}
+                        onClose={lambda reason: any -> None { explanationTaskId = ""; if reason == "applied" { fetchTasks(); } }}
+                        onAccept={lambda -> None { explanationTaskId = ""; fetchTasks(); }}
+                        onModify={lambda -> None { onOpenDetail(explanationTask); explanationTaskId = ""; }}
+                        onReject={lambda -> None { explanationTaskId = ""; }}
+                    />
+                </div>
             ) if explanationTask != None else None}
 
             <div className="cal-sidebar">
@@ -441,6 +551,15 @@ def:pub CalendarView(
                     >
                         <ChevronsRight size={14} />
                         Roll to this week
+                    </button>
+                    <button
+                        className={"cal-nav-optimize" + (" cal-nav-optimize-loading" if aiOptimizeLoading else "")}
+                        onClick={lambda -> None { if not aiOptimizeLoading { runOptimize(); } }}
+                        title="AI optimizes your schedule for the week"
+                        disabled={aiOptimizeLoading}
+                    >
+                        <Zap size={14} />
+                        {("Optimizing..." if aiOptimizeLoading else "Optimize Week")}
                     </button>
                 </div>
 
@@ -560,7 +679,7 @@ def:pub CalendarView(
                                     <div
                                         key={h}
                                         className="cal-hour-line"
-                                        style={{top: ((h - 6) * 60).toString() + "px"}}
+                                        style={{top: (h * 60).toString() + "px"}}
                                     ></div>
                                     for h in hours
                                 ]}
@@ -569,7 +688,7 @@ def:pub CalendarView(
                                     <div
                                         key={"h" + h.toString()}
                                         className="cal-half-line"
-                                        style={{top: ((h - 6) * 60 + 30).toString() + "px"}}
+                                        style={{top: (h * 60 + 30).toString() + "px"}}
                                     ></div>
                                     for h in hours
                                 ]}
@@ -582,9 +701,9 @@ def:pub CalendarView(
                                             top: getTaskTop(task),
                                             height: getTaskHeight(task)
                                         }}
-                                        draggable={(not task.is_locked)}
+                                        draggable={(not task.is_locked and len(replanBannerChanges) == 0)}
                                         onDragStart={lambda e: any -> None {
-                                            if task.is_locked { return; }
+                                            if task.is_locked or len(replanBannerChanges) > 0 { return; }
                                             draggingTaskId = task.id;
                                             draggingFromCalendar = True;
                                             e.dataTransfer.effectAllowed = "move";
@@ -605,13 +724,15 @@ def:pub CalendarView(
                                         >
                                             {(<Lock size={11} />) if task.is_locked else (<LockOpen size={11} />)}
                                         </button>
-                                        <div
-                                            className="cal-event-resize-handle"
-                                            onMouseDown={lambda e: any -> None { startResize(e, task); }}
-                                            title="Drag to resize"
-                                        >
-                                            ⠿
-                                        </div>
+                                        {(
+                                            <div
+                                                className="cal-event-resize-handle"
+                                                onMouseDown={lambda e: any -> None { startResize(e, task); }}
+                                                title="Drag to resize"
+                                            >
+                                                ⠿
+                                            </div>
+                                        ) if len(replanBannerChanges) == 0 else None}
                                     </div>
                                     for task in getTasksForDate(dateStr)
                                 ]}
@@ -624,13 +745,29 @@ def:pub CalendarView(
                                             top: getGhostTop(change),
                                             height: getGhostHeight(change)
                                         }}
+                                        draggable={True}
+                                        onDragStart={lambda e: any -> None {
+                                            draggingGhostTaskId = change.task_id;
+                                            e.dataTransfer.effectAllowed = "move";
+                                            e.dataTransfer.setData("text/plain", change.task_id);
+                                        }}
+                                        onDragEnd={lambda e: any -> None { draggingGhostTaskId = ""; }}
                                         title={"AI proposed: " + change.task_title}
                                     >
                                         <div className="cal-event-body">
                                             <span className="cal-event-title">{change.task_title}</span>
-                                            <span className="cal-event-time">{change.new_start_time + " – " + change.new_end_time}</span>
+                                            <span className="cal-event-time">
+                                                {change.new_start_time + " – " + (ghostResizeCurrentEndTime if (resizingGhostTaskId == change.task_id and ghostResizeCurrentEndTime != "") else change.new_end_time)}
+                                            </span>
                                         </div>
                                         <span className="cal-event-ghost-badge">AI</span>
+                                        <div
+                                            className="cal-event-resize-handle"
+                                            onMouseDown={lambda e: any -> None { startGhostResize(e, change); }}
+                                            title="Drag to adjust end time"
+                                        >
+                                            ⠿
+                                        </div>
                                     </div>
                                     for change in getGhostEventsForDate(dateStr)
                                 ]}

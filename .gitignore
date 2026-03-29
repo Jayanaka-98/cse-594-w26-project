@@ -1,6 +1,6 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
-.jac/
+.jac/*
 *.py[codz]
 *$py.class
 

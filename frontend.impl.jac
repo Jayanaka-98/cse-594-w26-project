@@ -66,11 +66,15 @@ impl app.fetchTasks -> None {
     result = root spawn ListTasks(list_id="");
     tasks = result.reports[0] if result.reports else [];
     tasksLoading = False;
-    # AI features disabled — conflict detection and auto-optimization off
-    overrunRatios = {};
-    conflictInfo = {"conflicting_ids": [], "tasks_affected": 0, "total_adjustment_minutes": 0};
-    conflictsActive = False;
-    aiPlan = None;
+    pResult = root spawn GetUserPatterns();
+    if pResult.reports and pResult.reports[0] {
+        pData = pResult.reports[0];
+        ratios = pData["category_overrun_ratios"];
+        if ratios { overrunRatios = ratios; }
+    }
+    detected = computeConflicts(tasks, overrunRatios);
+    conflictInfo = detected;
+    conflictsActive = detected["tasks_affected"] > 0;
 }
 
 impl app.createList(name: str) -> None {
