@@ -35,16 +35,8 @@ def:pub TaskModal(
     }
 
     async def fetchAIDuration -> None {
-        if not title.trim() or category == "" { return; }
-        isEstimating = True;
-        result = root spawn AIEstimateDuration(task_title=title, category=category);
-        if result.reports {
-            d = result.reports[0];
-            aiSuggestedMinutes = d.suggested_minutes;
-            aiSuggestedRationale = d.rationale;
-            aiSuggestedConfidence = d.confidence_pct;
-        }
-        isEstimating = False;
+        # AI duration estimation disabled
+        return;
     }
 
     def handleKeyPress(e: any) -> None {
@@ -52,18 +44,9 @@ def:pub TaskModal(
     }
 
     async def processTranscript(transcript: str) -> None {
+        # AI voice extraction disabled — just set transcript as title
         audioTranscript = transcript;
-        isProcessingAudio = True;
-        result = root spawn AIExtractTaskFromTranscript(transcript=transcript);
-        if result.reports {
-            data = result.reports[0];
-            title = data.title if data.title else title;
-            description = data.description if data.description else description;
-            status = data.status if data.status else status;
-            priority = data.priority if data.priority else priority;
-            dueDate = data.due_date if data.due_date else dueDate;
-        }
-        isProcessingAudio = False;
+        title = transcript;
     }
 
     def startRecording -> None {

@@ -86,6 +86,23 @@ node UserProfile {
         default_view: str = "list";
 }
 
+node ChatSession {
+    has id: str = "chat_session";
+}
+
+node ChatMessage {
+    has id: str,
+        role: str,
+        content: str,
+        action_type: str = "",
+        action_status: str = "",
+        timestamp: str = "";
+}
+
+node CalendarDay {
+    has date: str;  # YYYY-MM-DD — one node per date that has scheduled tasks
+}
+
 # ===== GLOBAL COUNTERS =====
 
 glob space_counter: int = 0;
@@ -93,6 +110,7 @@ glob list_counter: int = 0;
 glob task_counter: int = 0;
 glob comment_counter: int = 0;
 glob task_history_counter: int = 0;
+glob chat_msg_counter: int = 0;
 
 # ===== USER PROFILE WALKERS =====
 
@@ -226,32 +244,26 @@ walker:priv DeleteSpace {
 
 walker:priv CreateList {
     has name: str,
-        space_id: str,
+        space_id: str = "",
         color: str = "gray";
 
-    can find_space with Root entry {
-        visit [-->];
-    }
-
-    can attach_to_space with Space entry {
-        if here.id == self.space_id {
-            global list_counter;
-            list_counter += 1;
-            new_id = "list_" + str(list_counter);
-            new_list = here ++> List(
-                id=new_id,
-                name=self.name,
-                space_id=self.space_id,
-                color=self.color
-            );
-            if new_list {
-                report {
-                    "id": new_list[0].id,
-                    "name": new_list[0].name,
-                    "space_id": new_list[0].space_id,
-                    "color": new_list[0].color
-                };
-            }
+    can create with Root entry {
+        global list_counter;
+        list_counter += 1;
+        new_id = "list_" + str(list_counter);
+        new_list = here ++> List(
+            id=new_id,
+            name=self.name,
+            space_id="",
+            color=self.color
+        );
+        if new_list {
+            report {
+                "id": new_list[0].id,
+                "name": new_list[0].name,
+                "space_id": "",
+                "color": new_list[0].color
+            };
         }
     }
 }
@@ -324,6 +336,7 @@ walker:priv CreateTask {
         estimated_duration: int = 60,
         category: str = "";
     has created: bool = False;
+    has new_task_ref: list = [];  # stores [task_node] after creation
 
     can start with Root entry {
         if self.list_id == "" {
@@ -339,6 +352,7 @@ walker:priv CreateTask {
             );
             if new_task {
                 self.created = True;
+                self.new_task_ref = new_task;
                 report {
                     "id": new_task[0].id, "title": new_task[0].title,
                     "description": new_task[0].description, "status": new_task[0].status,
@@ -376,6 +390,7 @@ walker:priv CreateTask {
             );
             if new_task {
                 self.created = True;
+                self.new_task_ref = new_task;
                 report {
                     "id": new_task[0].id, "title": new_task[0].title,
                     "description": new_task[0].description, "status": new_task[0].status,
@@ -389,6 +404,17 @@ walker:priv CreateTask {
                 };
             }
         }
+    }
+
+    can link_calendar with Root exit {
+        # Link new task to its CalendarDay node (here is Root at exit)
+        if not self.new_task_ref or self.start_date == "" { return; }
+        task_node = self.new_task_ref[0];
+        cd_list = [-->][?:CalendarDay, date == self.start_date];
+        if not cd_list {
+            cd_list = here ++> CalendarDay(date=self.start_date);
+        }
+        cd_list[0] ++> task_node;
     }
 }
 
@@ -437,6 +463,49 @@ walker:priv ListTasks {
     }
 }
 
+walker:priv ListTasksForDate {
+    has date: str;
+    has tasks: list = [];
+
+    can collect with Root entry {
+        # Navigate directly to the CalendarDay for this date
+        day_nodes = [-->][?:CalendarDay, date == self.date];
+        if day_nodes {
+            visit day_nodes[0];
+        }
+    }
+
+    can gather_from_day with CalendarDay entry {
+        visit [-->];
+    }
+
+    can gather with Task entry {
+        self.tasks.append({
+            "id": here.id,
+            "title": here.title,
+            "description": here.description,
+            "status": here.status,
+            "priority": here.priority,
+            "due_date": here.due_date,
+            "list_id": here.list_id,
+            "parent_task_id": here.parent_task_id,
+            "start_date": here.start_date,
+            "start_time": here.start_time,
+            "end_time": here.end_time,
+            "estimated_duration": here.estimated_duration,
+            "actual_duration": here.actual_duration,
+            "category": here.category,
+            "is_locked": here.is_locked,
+            "ai_confidence": here.ai_confidence,
+            "ai_explanation": here.ai_explanation
+        });
+    }
+
+    can report_all with Root exit {
+        report self.tasks;
+    }
+}
+
 walker:priv UpdateTask {
     has task_id: str,
         title: str,
@@ -449,6 +518,8 @@ walker:priv UpdateTask {
         end_time: str = "",
         estimated_duration: int = 60,
         category: str = "";
+    has updated_task_ref: list = [];
+    has old_start_date: str = "";
 
     can search with Root entry {
         visit [-->];
@@ -464,6 +535,7 @@ walker:priv UpdateTask {
 
     can do_update with Task entry {
         if here.id == self.task_id {
+            self.old_start_date = here.start_date;
             here.title = self.title;
             here.description = self.description;
             here.status = self.status;
@@ -474,6 +546,7 @@ walker:priv UpdateTask {
             here.end_time = self.end_time;
             here.estimated_duration = self.estimated_duration;
             here.category = self.category;
+            self.updated_task_ref = [here];
             report {
                 "id": here.id,
                 "title": here.title,
@@ -493,6 +566,26 @@ walker:priv UpdateTask {
                 "ai_confidence": here.ai_confidence,
                 "ai_explanation": here.ai_explanation
             };
+        }
+    }
+
+    can update_calendar with Root exit {
+        if not self.updated_task_ref { return; }
+        task_node = self.updated_task_ref[0];
+        # Remove from old CalendarDay if date changed
+        if self.old_start_date != "" and self.old_start_date != self.start_date {
+            old_cd_list = [-->][?:CalendarDay, date == self.old_start_date];
+            for cd in old_cd_list {
+                cd del --> task_node;
+            }
+        }
+        # Link to new CalendarDay if scheduled
+        if self.start_date != "" {
+            cd_list = [-->][?:CalendarDay, date == self.start_date];
+            if not cd_list {
+                cd_list = here ++> CalendarDay(date=self.start_date);
+            }
+            cd_list[0] ++> task_node;
         }
     }
 }
@@ -1381,6 +1474,10 @@ walker:priv SeedDemoData {
         self.already_seeded = True;
     }
 
+    can detect_list with List entry {
+        self.already_seeded = True;
+    }
+
     can seed with Root exit {
         global space_counter, list_counter, task_counter, task_history_counter;
         if self.already_seeded {
@@ -1388,22 +1485,15 @@ walker:priv SeedDemoData {
             return;
         }
 
-        # Create two spaces
-        space_counter += 1;
-        s1 = here ++> Space(id="space_" + str(space_counter), name="FlowBoard Demo", color="purple");
-
-        space_counter += 1;
-        s2 = here ++> Space(id="space_" + str(space_counter), name="Personal", color="blue");
-
-        # Create lists — connect to parent Space
+        # Create lists directly on root (no spaces)
         list_counter += 1;
-        l1 = s1[0] ++> List(id="list_" + str(list_counter), name="AI Project", space_id=s1[0].id, color="indigo");
+        l1 = here ++> List(id="list_" + str(list_counter), name="AI Project", space_id="", color="indigo");
 
         list_counter += 1;
-        l2 = s1[0] ++> List(id="list_" + str(list_counter), name="Research", space_id=s1[0].id, color="teal");
+        l2 = here ++> List(id="list_" + str(list_counter), name="Research", space_id="", color="teal");
 
         list_counter += 1;
-        l3 = s2[0] ++> List(id="list_" + str(list_counter), name="Habits", space_id=s2[0].id, color="green");
+        l3 = here ++> List(id="list_" + str(list_counter), name="Habits", space_id="", color="green");
 
         lid = l1[0].id;
         rid = l2[0].id;
@@ -1575,7 +1665,7 @@ walker:priv SeedDemoData {
             last_updated="2026-03-06T18:00:00"
         );
 
-        report {"seeded": True, "spaces": 2, "tasks": 12};
+        report {"seeded": True, "lists": 3, "tasks": 12};
     }
 }
 
@@ -1764,6 +1854,691 @@ walker:priv ListTaskHistory {
 
     can report_all with Root exit {
         report self.history;
+    }
+}
+
+# ===== CONVERSATIONAL AGENT (INVOKE + EXTRACT + PIPE) =====
+
+# --- Agent GENERATE function (context-driven) ---
+
+def agent_respond(
+    history: list[dict],
+    current_date: str,
+    available_lists: str,
+    all_tasks: str
+) -> str by llm();
+sem agent_respond = "You are FlowBoard AI, a conversational task management assistant. Be friendly and natural — never dump a form or list of fields at the user. The 'history' is the COMPLETE conversation including the user's latest message as the last entry. Generate the NEXT assistant reply. RULES: 1) For CREATE TASK — silently extract from history: title (task name), list (any list mentioned), date/time, duration (minutes/hours). Ask for ONLY the single next missing field. When asking which list, ALWAYS show options from available_lists (e.g. 'Which list? Options: AI Project, Research, Habits'). When asking duration, give an example (e.g. 'How long? e.g. 30 or 60 minutes'). Once title + list + date + start_time + duration are all known, confirm: 'Got it! I'll add [title] to [list] on [date] at [time] for [N] min. Shall I go ahead?' 2) For DELETE/UPDATE: find the task in all_tasks and confirm. 3) Answer direct questions (lists, tasks, schedule) helpfully. 4) Resolve relative dates with current_date. 5) Be concise and warm.";
+sem agent_respond.history = "Complete conversation as list of {role, content} dicts — the user's latest message is the last entry with role='user'. Generate the next assistant reply based on the full conversation.";
+sem agent_respond.current_date = "Today's date YYYY-MM-DD for resolving relative dates.";
+sem agent_respond.available_lists = "All available lists with IDs. Show these when asking which list.";
+sem agent_respond.all_tasks = "All tasks with IDs and details. Use for update/delete and answering questions.";
+
+# --- Action types ---
+
+obj ChatAction {
+    has action_type: str,
+        target_task_id: str = "",
+        task_title: str = "",
+        task_description: str = "",
+        task_status: str = "",
+        task_priority: str = "",
+        task_due_date: str = "",
+        task_list_id: str = "",
+        task_start_date: str = "",
+        task_start_time: str = "",
+        task_end_time: str = "",
+        task_category: str = "",
+        task_estimated_duration: int = 0;
+}
+sem ChatAction.action_type = "Exactly one of: create_task, update_task, delete_task, reschedule, none.";
+sem ChatAction.target_task_id = "For update_task or delete_task: the exact task ID from the system. Empty string otherwise.";
+sem ChatAction.task_title = "Task title. Empty string if not applicable.";
+sem ChatAction.task_description = "Task description if specified. Empty string if not.";
+sem ChatAction.task_status = "One of: todo, in_progress, review, done. Empty string if not changing.";
+sem ChatAction.task_priority = "One of: urgent, high, normal, low. Empty string if not specified.";
+sem ChatAction.task_due_date = "Deadline date YYYY-MM-DD only if explicitly stated as a deadline. Empty string otherwise.";
+sem ChatAction.task_list_id = "List ID (e.g. 'list_1'). Must match the actual system ID. Empty string if unknown.";
+sem ChatAction.task_start_date = "Scheduled date YYYY-MM-DD resolved from conversation (e.g. 'tomorrow' → next day). Empty string if unknown.";
+sem ChatAction.task_start_time = "Start time HH:MM 24h (e.g. '2pm' → '14:00'). Empty string if unknown.";
+sem ChatAction.task_end_time = "End time HH:MM 24h computed as start_time + estimated_duration. Empty string if unknown.";
+sem ChatAction.task_category = "One of: Coding, Research, Writing, Meeting, Admin. Empty string if not specified.";
+sem ChatAction.task_estimated_duration = "Duration in minutes. 0 if not known.";
+
+obj TaskReadiness {
+    has ready: bool,
+        missing: list[str],
+        action_type: str,
+        target_task_id: str,
+        task_title: str,
+        task_description: str,
+        task_status: str,
+        task_priority: str,
+        task_due_date: str,
+        task_list_id: str,
+        task_start_date: str,
+        task_start_time: str,
+        task_end_time: str,
+        task_category: str,
+        task_estimated_duration: int;
+}
+sem TaskReadiness = "Result of extracting task action fields from the full conversation history.";
+sem TaskReadiness.ready = "True when all required fields ARE present in the conversation and have been extracted. For create_task: true when task_title != '', task_list_id != '', task_start_date != '', task_start_time != '', and task_estimated_duration > 0 — regardless of whether the assistant explicitly confirmed them. For update_task/delete_task: true when target_task_id != ''. For action_type='none': always true. Set False only when one or more required fields genuinely cannot be found anywhere in the conversation.";
+sem TaskReadiness.missing = "Names of fields that have NO value anywhere in the entire conversation (e.g. ['duration', 'list']). If a field WAS mentioned by the user in any prior message, do NOT include it here. Empty list when ready=True.";
+sem TaskReadiness.action_type = "Exactly one of: create_task, update_task, delete_task, reschedule, none.";
+sem TaskReadiness.target_task_id = "For update_task or delete_task: the exact task ID from the system. Empty string otherwise.";
+sem TaskReadiness.task_title = "Task title extracted from conversation. Empty string if unknown.";
+sem TaskReadiness.task_description = "Task description if mentioned. Empty string if not.";
+sem TaskReadiness.task_status = "One of: todo, in_progress, review, done. Empty string if not specified.";
+sem TaskReadiness.task_priority = "One of: urgent, high, normal, low. Empty string if not specified.";
+sem TaskReadiness.task_due_date = "Deadline date YYYY-MM-DD only if explicitly stated. Empty string otherwise.";
+sem TaskReadiness.task_list_id = "List ID (e.g. 'list_1') resolved from available_lists. Empty string if unknown.";
+sem TaskReadiness.task_start_date = "Scheduled date YYYY-MM-DD resolved using current_date (e.g. 'tomorrow' → next day). Empty string if unknown.";
+sem TaskReadiness.task_start_time = "Start time HH:MM 24h (e.g. '2pm' → '14:00'). Empty string if unknown.";
+sem TaskReadiness.task_end_time = "End time HH:MM 24h = start_time + task_estimated_duration minutes. Empty string if either is unknown.";
+sem TaskReadiness.task_category = "One of: Coding, Research, Writing, Meeting, Admin. Empty string if not specified.";
+sem TaskReadiness.task_estimated_duration = "Duration in minutes from conversation. 0 if not yet provided.";
+
+def check_task_readiness(
+    history: list[dict],
+    current_date: str,
+    available_lists: str,
+    available_tasks: str
+) -> TaskReadiness by llm(temperature=0.1);
+sem check_task_readiness = "Analyze the COMPLETE conversation history and extract all task action fields. RULES: (1) Scan every message for title, list, date, time, duration. (2) For create_task: ready=True when task_title, task_list_id, task_start_date, task_start_time, and task_estimated_duration > 0 are ALL extractable. (3) For delete_task or update_task: match the task the user refers to against available_tasks by title and schedule — set target_task_id to the EXACT id from available_tasks. ready=True when target_task_id is identified. (4) For general questions: action_type='none', ready=True. (5) Resolve relative dates with current_date. Convert 12h to 24h. Compute task_end_time = start_time + duration. (6) Match list names to IDs using available_lists. Only add a field to 'missing' if it genuinely cannot be found anywhere in history.";
+sem check_task_readiness.history = "Full conversation as list of {role, content} dicts. Scan ALL entries.";
+sem check_task_readiness.current_date = "Today's date YYYY-MM-DD for resolving relative dates.";
+sem check_task_readiness.available_lists = "List names with IDs (e.g. 'Research (id: list_2)'). Match user's list name to the correct ID.";
+sem check_task_readiness.available_tasks = "All current tasks with exact IDs and details. Use to find the correct target_task_id for delete/update by matching title and schedule.";
+
+# --- Chat walkers ---
+
+walker:priv AgentChat {
+    has message: str;
+    has all_tasks: list = [];
+    has all_lists: list = [];
+    has history_msgs: list = [];
+
+    can start with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can collect_list with List entry {
+        self.all_lists.append({
+            "id": here.id,
+            "name": here.name
+        });
+        visit [-->];
+    }
+
+    can collect_task with Task entry {
+        self.all_tasks.append({
+            "id": here.id,
+            "title": here.title,
+            "description": here.description,
+            "status": here.status,
+            "priority": here.priority,
+            "due_date": here.due_date,
+            "list_id": here.list_id,
+            "parent_task_id": here.parent_task_id,
+            "start_date": here.start_date,
+            "start_time": here.start_time,
+            "end_time": here.end_time,
+            "estimated_duration": here.estimated_duration,
+            "category": here.category
+        });
+    }
+
+    can enter_session with ChatSession entry {
+        visit [-->];
+    }
+
+    can collect_chat with ChatMessage entry {
+        self.history_msgs.append({
+            "id": here.id,
+            "role": here.role,
+            "content": here.content
+        });
+    }
+
+    can finalize with Root exit {
+        global chat_msg_counter;
+
+        # Format lists context
+        sl_lines = [];
+        for l in self.all_lists {
+            sl_lines.append("List: " + str(l["name"]) + " (id: " + str(l["id"]) + ")");
+        }
+        lists_ctx = "\n".join(sl_lines) if sl_lines else "No lists exist yet.";
+
+        # Format tasks context
+        task_lines = [];
+        for t in self.all_tasks {
+            line = "[" + str(t["id"]) + "] " + str(t["title"]);
+            line += " | status:" + str(t["status"]) + " | priority:" + str(t["priority"]);
+            if t.get("category", "") != "" {
+                line += " | category:" + str(t["category"]);
+            }
+            if t.get("start_date", "") != "" and t.get("start_time", "") != "" {
+                line += " | scheduled:" + str(t["start_date"]) + " " + str(t["start_time"]) + "-" + str(t.get("end_time", ""));
+            }
+            if t.get("due_date", "") != "" {
+                line += " | due:" + str(t["due_date"]);
+            }
+            if t.get("estimated_duration", 0) > 0 {
+                line += " | est:" + str(t["estimated_duration"]) + "min";
+            }
+            if t.get("list_id", "") != "" {
+                line += " | list:" + str(t["list_id"]);
+            }
+            task_lines.append(line);
+        }
+        tasks_ctx = "\n".join(task_lines) if task_lines else "No tasks exist yet.";
+
+        # Build full conversation history including the current user message as last entry
+        self.history_msgs.sort(
+            key=lambda m: int(m["id"].replace("chat_", "")) if m["id"].startswith("chat_") else 0
+        );
+        history_list = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in self.history_msgs[-20:]
+        ];
+        # Append current user message so model sees the full turn
+        history_list.append({"role": "user", "content": self.message});
+
+        current_dt = datetime.now().strftime("%Y-%m-%d");
+
+        # GENERATE: LLM responds with full context
+        response = agent_respond(
+            history=history_list,
+            current_date=current_dt,
+            available_lists=lists_ctx,
+            all_tasks=tasks_ctx
+        );
+
+        # Find or create ChatSession, then save messages there
+        session = None;
+        for child in [-->] {
+            if isinstance(child, ChatSession) {
+                session = child;
+            }
+        }
+        if session is None {
+            result = here ++> ChatSession(id="chat_session");
+            session = result[0];
+        }
+
+        chat_msg_counter += 1;
+        session ++> ChatMessage(
+            id="chat_" + str(chat_msg_counter),
+            role="user",
+            content=self.message,
+            timestamp=datetime.now().isoformat()
+        );
+
+        chat_msg_counter += 1;
+        session ++> ChatMessage(
+            id="chat_" + str(chat_msg_counter),
+            role="assistant",
+            content=response,
+            timestamp=datetime.now().isoformat()
+        );
+
+        report {
+            "content": response,
+            "tool_events": []
+        };
+    }
+}
+
+walker:priv AgentCheckReady {
+    has current_date: str;
+    has history: list = [];  # list of {role, content, ...} message dicts from frontend
+    has all_lists: list = [];
+    has all_tasks: list = [];
+
+    can collect with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can gather_list with List entry {
+        self.all_lists.append(here.name + " (id: " + here.id + ")");
+        visit [-->];
+    }
+
+    can gather_task with Task entry {
+        line = "[" + here.id + "] " + here.title;
+        if here.start_date != "" and here.start_time != "" {
+            line += " | " + here.start_date + " " + here.start_time + "-" + here.end_time;
+        }
+        line += " | list:" + here.list_id;
+        self.all_tasks.append(line);
+    }
+
+    can finalize with Root exit {
+        lists_str = ", ".join(self.all_lists) if self.all_lists else "No lists available";
+        tasks_str = "\n".join(self.all_tasks) if self.all_tasks else "No tasks yet";
+        clean_history = [{"role": m["role"], "content": m["content"]} for m in self.history];
+        result = check_task_readiness(
+            history=clean_history,
+            current_date=self.current_date,
+            available_lists=lists_str,
+            available_tasks=tasks_str
+        );
+        report {
+            "ready": result.ready,
+            "missing": result.missing,
+            "action_type": result.action_type,
+            "target_task_id": result.target_task_id,
+            "task_title": result.task_title,
+            "task_description": result.task_description,
+            "task_status": result.task_status,
+            "task_priority": result.task_priority,
+            "task_due_date": result.task_due_date,
+            "task_list_id": result.task_list_id,
+            "task_start_date": result.task_start_date,
+            "task_start_time": result.task_start_time,
+            "task_end_time": result.task_end_time,
+            "task_category": result.task_category,
+            "task_estimated_duration": result.task_estimated_duration
+        };
+    }
+}
+
+walker:priv AgentExecuteAction {
+    has action_type: str,
+        target_task_id: str = "",
+        task_title: str = "",
+        task_description: str = "",
+        task_status: str = "",
+        task_priority: str = "",
+        task_due_date: str = "",
+        task_list_id: str = "",
+        task_start_date: str = "",
+        task_start_time: str = "",
+        task_end_time: str = "",
+        task_category: str = "",
+        task_estimated_duration: int = 0;
+    has executed: bool = False;
+    has new_task_ref: list = [];
+
+    can start with Root entry {
+        if self.action_type == "create_task" and self.task_list_id == "" {
+            # No list specified — create task on root
+            global task_counter;
+            task_counter += 1;
+            new_id = "task_" + str(task_counter);
+            new_task = here ++> Task(
+                id=new_id,
+                title=self.task_title,
+                description=(self.task_description if self.task_description else ""),
+                status=(self.task_status if self.task_status != "" else "todo"),
+                priority=(self.task_priority if self.task_priority != "" else "normal"),
+                due_date=(self.task_due_date if self.task_due_date else ""),
+                list_id="",
+                start_date=(self.task_start_date if self.task_start_date else ""),
+                start_time=(self.task_start_time if self.task_start_time else ""),
+                end_time=(self.task_end_time if self.task_end_time else ""),
+                estimated_duration=(self.task_estimated_duration if self.task_estimated_duration > 0 else 60),
+                category=(self.task_category if self.task_category else "")
+            );
+            self.new_task_ref = new_task;
+            self.executed = True;
+            report {"success": True, "action": "create_task", "task_id": new_id};
+        } else {
+            visit [-->];
+        }
+    }
+
+    can pass_space with Space entry {
+        if not self.executed {
+            visit [-->];
+        }
+    }
+
+    can handle_list with List entry {
+        if self.executed {
+            return;
+        }
+        # Match by ID or by name (LLM sometimes sends the name instead of ID)
+        list_matches = (
+            self.action_type == "create_task" and
+            (here.id == self.task_list_id or here.name == self.task_list_id)
+        );
+        if list_matches {
+            global task_counter;
+            task_counter += 1;
+            new_id = "task_" + str(task_counter);
+            new_task = here ++> Task(
+                id=new_id,
+                title=self.task_title,
+                description=(self.task_description if self.task_description else ""),
+                status=(self.task_status if self.task_status != "" else "todo"),
+                priority=(self.task_priority if self.task_priority != "" else "normal"),
+                due_date=(self.task_due_date if self.task_due_date else ""),
+                list_id=here.id,
+                start_date=(self.task_start_date if self.task_start_date else ""),
+                start_time=(self.task_start_time if self.task_start_time else ""),
+                end_time=(self.task_end_time if self.task_end_time else ""),
+                estimated_duration=(self.task_estimated_duration if self.task_estimated_duration > 0 else 60),
+                category=(self.task_category if self.task_category else "")
+            );
+            self.new_task_ref = new_task;
+            self.executed = True;
+            report {"success": True, "action": "create_task", "task_id": new_id};
+        } else {
+            visit [-->];
+        }
+    }
+
+    can handle_task with Task entry {
+        if self.executed {
+            return;
+        }
+        if self.action_type == "delete_task" and here.id == self.target_task_id {
+            del here;
+            self.executed = True;
+            report {"success": True, "action": "delete_task"};
+        } elif self.action_type == "update_task" and here.id == self.target_task_id {
+            if self.task_title != "" {
+                here.title = self.task_title;
+            }
+            if self.task_description != "" {
+                here.description = self.task_description;
+            }
+            if self.task_status != "" {
+                here.status = self.task_status;
+            }
+            if self.task_priority != "" {
+                here.priority = self.task_priority;
+            }
+            if self.task_due_date != "" {
+                here.due_date = self.task_due_date;
+            }
+            if self.task_start_date != "" {
+                here.start_date = self.task_start_date;
+            }
+            if self.task_start_time != "" {
+                here.start_time = self.task_start_time;
+            }
+            if self.task_end_time != "" {
+                here.end_time = self.task_end_time;
+            }
+            if self.task_category != "" {
+                here.category = self.task_category;
+            }
+            if self.task_estimated_duration > 0 {
+                here.estimated_duration = self.task_estimated_duration;
+            }
+            self.executed = True;
+            report {"success": True, "action": "update_task"};
+        }
+    }
+
+    can fallback with Root exit {
+        if not self.executed {
+            report {"success": False, "error": "Could not execute action"};
+        }
+        # Link newly created task to its CalendarDay node
+        if self.new_task_ref and self.task_start_date != "" {
+            task_node = self.new_task_ref[0];
+            cd_list = [-->][?:CalendarDay, date == self.task_start_date];
+            if not cd_list {
+                cd_list = here ++> CalendarDay(date=self.task_start_date);
+            }
+            cd_list[0] ++> task_node;
+        }
+    }
+}
+
+walker:priv AgentExecuteCreate {
+    has task_title: str,
+        task_description: str = "",
+        task_status: str = "todo",
+        task_priority: str = "normal",
+        task_due_date: str = "",
+        task_list_id: str = "",
+        task_start_date: str = "",
+        task_start_time: str = "",
+        task_end_time: str = "",
+        task_category: str = "",
+        task_estimated_duration: int = 60;
+    has executed: bool = False;
+    has new_task_ref: list = [];
+
+    can start with Root entry {
+        if self.task_list_id == "" {
+            global task_counter;
+            task_counter += 1;
+            new_id = "task_" + str(task_counter);
+            new_task = here ++> Task(
+                id=new_id,
+                title=self.task_title,
+                description=self.task_description,
+                status=self.task_status if self.task_status != "" else "todo",
+                priority=self.task_priority if self.task_priority != "" else "normal",
+                due_date=self.task_due_date,
+                list_id="",
+                start_date=self.task_start_date,
+                start_time=self.task_start_time,
+                end_time=self.task_end_time,
+                estimated_duration=self.task_estimated_duration if self.task_estimated_duration > 0 else 60,
+                category=self.task_category
+            );
+            if new_task {
+                self.new_task_ref = new_task;
+                self.executed = True;
+                report {"success": True, "action": "create_task", "task_id": new_task[0].id};
+            }
+        } else {
+            visit [-->];
+        }
+    }
+
+    can pass_space with Space entry {
+        if not self.executed { visit [-->]; }
+    }
+
+    can handle_list with List entry {
+        if self.executed { return; }
+        if here.id == self.task_list_id or here.name == self.task_list_id {
+            global task_counter;
+            task_counter += 1;
+            new_id = "task_" + str(task_counter);
+            new_task = here ++> Task(
+                id=new_id,
+                title=self.task_title,
+                description=self.task_description,
+                status=self.task_status if self.task_status != "" else "todo",
+                priority=self.task_priority if self.task_priority != "" else "normal",
+                due_date=self.task_due_date,
+                list_id=here.id,
+                start_date=self.task_start_date,
+                start_time=self.task_start_time,
+                end_time=self.task_end_time,
+                estimated_duration=self.task_estimated_duration if self.task_estimated_duration > 0 else 60,
+                category=self.task_category
+            );
+            if new_task {
+                self.new_task_ref = new_task;
+                self.executed = True;
+                report {"success": True, "action": "create_task", "task_id": new_task[0].id};
+            }
+        }
+    }
+
+    can link_calendar with Root exit {
+        if not self.executed {
+            report {"success": False, "error": "Could not create task"};
+            return;
+        }
+        if self.new_task_ref and self.task_start_date != "" {
+            task_node = self.new_task_ref[0];
+            cd_list = [-->][?:CalendarDay, date == self.task_start_date];
+            if not cd_list {
+                cd_list = here ++> CalendarDay(date=self.task_start_date);
+            }
+            cd_list[0] ++> task_node;
+        }
+    }
+}
+
+walker:priv AgentExecuteUpdate {
+    has target_task_id: str,
+        task_title: str = "",
+        task_description: str = "",
+        task_status: str = "",
+        task_priority: str = "",
+        task_due_date: str = "",
+        task_start_date: str = "",
+        task_start_time: str = "",
+        task_end_time: str = "",
+        task_category: str = "",
+        task_estimated_duration: int = 0;
+    has executed: bool = False;
+    has updated_task_ref: list = [];
+    has old_start_date: str = "";
+
+    can search with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        if not self.executed { visit [-->]; }
+    }
+
+    can pass_list with List entry {
+        if not self.executed { visit [-->]; }
+    }
+
+    can handle_task with Task entry {
+        if self.executed { return; }
+        if here.id == self.target_task_id {
+            self.old_start_date = here.start_date;
+            if self.task_title != "" { here.title = self.task_title; }
+            if self.task_description != "" { here.description = self.task_description; }
+            if self.task_status != "" { here.status = self.task_status; }
+            if self.task_priority != "" { here.priority = self.task_priority; }
+            if self.task_due_date != "" { here.due_date = self.task_due_date; }
+            if self.task_start_date != "" { here.start_date = self.task_start_date; }
+            if self.task_start_time != "" { here.start_time = self.task_start_time; }
+            if self.task_end_time != "" { here.end_time = self.task_end_time; }
+            if self.task_category != "" { here.category = self.task_category; }
+            if self.task_estimated_duration > 0 { here.estimated_duration = self.task_estimated_duration; }
+            self.updated_task_ref = [here];
+            self.executed = True;
+            report {"success": True, "action": "update_task"};
+        }
+    }
+
+    can update_calendar with Root exit {
+        if not self.executed {
+            report {"success": False, "error": "Task not found"};
+            return;
+        }
+        task_node = self.updated_task_ref[0];
+        # Remove from old CalendarDay if date changed
+        if self.old_start_date != "" and self.old_start_date != self.task_start_date {
+            old_cd_list = [-->][?:CalendarDay, date == self.old_start_date];
+            for cd in old_cd_list {
+                cd del --> task_node;
+            }
+        }
+        # Link to new CalendarDay if scheduled
+        if self.task_start_date != "" {
+            cd_list = [-->][?:CalendarDay, date == self.task_start_date];
+            if not cd_list {
+                cd_list = here ++> CalendarDay(date=self.task_start_date);
+            }
+            cd_list[0] ++> task_node;
+        }
+    }
+}
+
+walker:priv AgentExecuteDelete {
+    has target_task_id: str = "",
+        task_title: str = "";
+    has executed: bool = False;
+
+    can search with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        if not self.executed { visit [-->]; }
+    }
+
+    can pass_list with List entry {
+        if not self.executed { visit [-->]; }
+    }
+
+    can handle_task with Task entry {
+        if self.executed { return; }
+        matched_by_id = self.target_task_id != "" and here.id == self.target_task_id;
+        matched_by_title = self.task_title != "" and here.title.lower() == self.task_title.lower();
+        if matched_by_id or matched_by_title {
+            del here;
+            self.executed = True;
+            report {"success": True, "action": "delete_task"};
+        }
+    }
+
+    can fallback with Root exit {
+        if not self.executed {
+            report {"success": False, "error": "Task not found"};
+        }
+    }
+}
+
+walker:priv ListChatHistory {
+    has messages: list = [];
+
+    can find_session with Root entry {
+        visit [-->];
+    }
+
+    can enter_session with ChatSession entry {
+        visit [-->];
+    }
+
+    can gather with ChatMessage entry {
+        self.messages.append({
+            "id": here.id,
+            "role": here.role,
+            "content": here.content,
+            "action_type": here.action_type,
+            "action_status": here.action_status,
+            "timestamp": here.timestamp
+        });
+    }
+
+    can report_all with Root exit {
+        report self.messages;
+    }
+}
+
+walker:priv ClearChatHistory {
+    can find_session with Root entry {
+        visit [-->];
+    }
+
+    can enter_session with ChatSession entry {
+        visit [-->];
+    }
+
+    can delete_msg with ChatMessage entry {
+        del here;
+    }
+
+    can done with Root exit {
+        report {"cleared": True};
     }
 }
 

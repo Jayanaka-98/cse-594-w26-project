@@ -49,21 +49,16 @@ impl app.closeProfile -> None {
     showProfile = False;
 }
 
-impl app.fetchSpaces -> None {
-    spacesLoading = True;
-    result = root spawn ListSpaces();
-    spaces = result.reports[0] if result.reports else [];
-    if len(spaces) == 0 and loggedInUsername == "dummy" {
-        root spawn SeedDemoData();
-        result2 = root spawn ListSpaces();
-        spaces = result2.reports[0] if result2.reports else [];
-    }
-    spacesLoading = False;
-}
-
 impl app.fetchLists -> None {
+    listsLoading = True;
     result = root spawn ListLists(space_id="");
     lists = result.reports[0] if result.reports else [];
+    if len(lists) == 0 and loggedInUsername == "dummy" {
+        root spawn SeedDemoData();
+        result2 = root spawn ListLists(space_id="");
+        lists = result2.reports[0] if result2.reports else [];
+    }
+    listsLoading = False;
 }
 
 impl app.fetchTasks -> None {
@@ -71,48 +66,22 @@ impl app.fetchTasks -> None {
     result = root spawn ListTasks(list_id="");
     tasks = result.reports[0] if result.reports else [];
     tasksLoading = False;
-    pResult = root spawn GetUserPatterns();
-    ratios = pResult.reports[0].category_overrun_ratios if pResult.reports else {};
-    overrunRatios = ratios;
-    info = computeConflicts(tasks, ratios);
-    conflictInfo = info;
-    conflictsActive = info.tasks_affected > 0;
-    if info.tasks_affected > 0 and view != "replanning" {
-        if not showConflictModal {
-            showConflictModal = True;
-        }
-        aiPlanLoading = True;
-        planResult = root spawn AIOptimizeSchedule(conflicting_task_ids=info.conflicting_ids);
-        aiPlan = planResult.reports[0] if planResult.reports else None;
-        aiPlanLoading = False;
-    } else {
-        aiPlan = None;
-    }
+    # AI features disabled — conflict detection and auto-optimization off
+    overrunRatios = {};
+    conflictInfo = {"conflicting_ids": [], "tasks_affected": 0, "total_adjustment_minutes": 0};
+    conflictsActive = False;
+    aiPlan = None;
 }
 
-impl app.createSpace(name: str, color: str) -> None {
+impl app.createList(name: str) -> None {
     if not name.trim() { return; }
-    result = root spawn CreateSpace(name=name, color=color);
-    if result.reports {
-        newSpace = result.reports[0];
-        spaces = spaces.concat([{
-            "id": newSpace.id,
-            "name": newSpace.name,
-            "color": newSpace.color,
-            "description": newSpace.description
-        }]);
-    }
-}
-
-impl app.createList(name: str, spaceId: str) -> None {
-    if not name.trim() { return; }
-    result = root spawn CreateList(name=name, space_id=spaceId);
+    result = root spawn CreateList(name=name, space_id="");
     if result.reports {
         newList = result.reports[0];
         lists = lists.concat([{
             "id": newList.id,
             "name": newList.name,
-            "space_id": newList.space_id,
+            "space_id": "",
             "color": newList.color
         }]);
     }
@@ -212,19 +181,6 @@ impl app.deleteTask(taskId: str) -> None {
     }
 }
 
-impl app.deleteSpace(spaceId: str) -> None {
-    root spawn DeleteSpace(space_id=spaceId);
-    spaces = spaces.filter(lambda s: any -> bool { return s.id != spaceId; });
-    lists = lists.filter(lambda l: any -> bool { return l.space_id != spaceId; });
-    if selectedSpaceId == spaceId {
-        selectedSpaceId = "";
-        selectedListId = "";
-        tasks = [];
-        showTaskDetail = False;
-        selectedTask = {};
-    }
-}
-
 impl app.deleteList(listId: str) -> None {
     root spawn DeleteList(list_id=listId);
     lists = lists.filter(lambda l: any -> bool { return l.id != listId; });
@@ -274,7 +230,6 @@ impl app.handleLogin -> None {
         username = "";
         password = "";
         await fetchProfile();
-        await fetchSpaces();
         await fetchLists();
         await fetchTasks();
     } else {
@@ -301,7 +256,6 @@ impl app.handleSignup -> None {
         username = "";
         password = "";
         await fetchProfile();
-        await fetchSpaces();
         await fetchLists();
         await fetchTasks();
     } else {
@@ -312,16 +266,13 @@ impl app.handleSignup -> None {
 impl app.handleLogout -> None {
     jacLogout();
     isLoggedIn = False;
-    spaces = [];
     lists = [];
     tasks = [];
     comments = [];
-    selectedSpaceId = "";
     selectedListId = "";
     selectedTask = {};
     showTaskDetail = False;
     showCreateTask = False;
-    showCreateSpace = False;
     showCreateList = False;
     showProfile = False;
     loggedInUsername = "";
@@ -338,8 +289,6 @@ impl app.handleAuthSubmit(e: any) -> None {
         await handleLogin();
     }
 }
-
-
 
 impl app.openTask(task: dict) -> None {
     selectedTask = task;

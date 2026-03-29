@@ -18,9 +18,9 @@ import from .components.DashboardView { DashboardView }
 import from .components.AnalyticsView { AnalyticsView }
 import from .components.ConflictAlertModal { ConflictAlertModal }
 import from .components.ModifyScheduleView { ModifyScheduleView }
+import from .components.ChatPanel { ChatPanel }
 
 sv import from main {
-    CreateSpace, ListSpaces, DeleteSpace,
     CreateList, ListLists, DeleteList,
     CreateTask, ListTasks, UpdateTask, DeleteTask,
     AddComment, ListComments, DeleteComment,
@@ -47,13 +47,11 @@ def:pub app -> any {
         profileDefaultView: str = "list",
 
         # Data
-        spaces: list = [],
         lists: list = [],
         tasks: list = [],
         comments: list = [],
 
         # Navigation
-        selectedSpaceId: str = "",
         selectedListId: str = "",
         view: str = "list",
 
@@ -73,15 +71,11 @@ def:pub app -> any {
         showCreateTask: bool = False,
         showGlobalCreateTask: bool = False,
 
-        # Create space modal
-        showCreateSpace: bool = False,
-
         # Create list modal
         showCreateList: bool = False,
-        createListForSpaceId: str = "",
 
         # Loading
-        spacesLoading: bool = True,
+        listsLoading: bool = True,
         tasksLoading: bool = False,
 
         # Conflict detection
@@ -91,7 +85,8 @@ def:pub app -> any {
         overrunRatios: dict = {},
         aiPlan: any = None,
         aiPlanLoading: bool = False,
-        explanationCache: dict = {};
+        explanationCache: dict = {},
+        calendarRefreshKey: int = 0;
 
     can with entry {
         isLoggedIn = jacIsLoggedIn();
@@ -107,14 +102,12 @@ def:pub app -> any {
     can with [isLoggedIn] entry {
         if isLoggedIn {
             fetchProfile();
-            fetchSpaces();
             fetchLists();
             fetchTasks();
         }
     }
 
     # Method declarations (implementations in frontend.impl.jac)
-    async def fetchSpaces -> None;
     async def fetchLists -> None;
     async def fetchTasks -> None;
     async def fetchProfile -> None;
@@ -122,13 +115,11 @@ def:pub app -> any {
     async def toggleTheme -> None;
     def openProfile -> None;
     def closeProfile -> None;
-    async def createSpace(name: str, color: str) -> None;
-    async def createList(name: str, spaceId: str) -> None;
+    async def createList(name: str) -> None;
     async def createTask(title: str, description: str, status: str, priority: str, dueDate: str, parentTaskId: str, startDate: str, startTime: str, endTime: str, category: str, estimatedDuration: int) -> None;
     async def updateTask(taskId: str, title: str, description: str, status: str, priority: str, dueDate: str, startDate: str, startTime: str, endTime: str) -> None;
     async def updateTaskStatus(taskId: str, status: str) -> None;
     async def deleteTask(taskId: str) -> None;
-    async def deleteSpace(spaceId: str) -> None;
     async def deleteList(listId: str) -> None;
     async def fetchComments(taskId: str) -> None;
     async def addComment(taskId: str, content: str) -> None;
@@ -246,19 +237,13 @@ def:pub app -> any {
             </div>
             <div className="app-body">
                 <Sidebar
-                    spaces={spaces}
                     lists={lists}
                     tasks={tasks}
-                    selectedSpaceId={selectedSpaceId}
                     selectedListId={selectedListId}
-                    spacesLoading={spacesLoading}
-                    onSelectSpace={lambda spaceId: str -> None { selectedSpaceId = spaceId; selectedListId = ""; tasks = []; showTaskDetail = False; }}
+                    listsLoading={listsLoading}
                     onSelectList={lambda listId: str -> None { selectedListId = listId; showTaskDetail = False; }}
-                    onCreateSpace={lambda -> None { showCreateSpace = True; }}
-                    onCreateList={lambda spaceId: str -> None { createListForSpaceId = spaceId; showCreateList = True; }}
-                    onDeleteSpace={deleteSpace}
+                    onCreateList={lambda -> None { showCreateList = True; }}
                     onDeleteList={deleteList}
-                    
                 />
                 <div className="main-content">
                     {(
@@ -345,6 +330,7 @@ def:pub app -> any {
                             onUpdateTask={updateTask}
                             onOpenDetail={openTask}
                             explanationCache={explanationCache}
+                            refreshKey={calendarRefreshKey}
                         />
                     ) if view == "calendar" else (
                         (
@@ -352,16 +338,16 @@ def:pub app -> any {
                                 <div className="empty-state-icon">⚡</div>
                                 <h2 className="empty-state-title">Welcome to FlowBoard</h2>
                                 <p className="empty-state-text">
-                                    Create a Space to organize your work, then add Lists and Tasks.
+                                    Create a List to organize your work, then add Tasks.
                                 </p>
                                 <button
-                                    onClick={lambda -> None { showCreateSpace = True; }}
+                                    onClick={lambda -> None { showCreateList = True; }}
                                     className="btn-primary btn-lg"
                                 >
-                                    + Create Space
+                                    + Create List
                                 </button>
                             </div>
-                        ) if len(spaces) == 0 else (
+                        ) if len(lists) == 0 else (
                             <div className="nested-view">
                                 {(
                                     <div className="loading-tasks">
@@ -371,75 +357,49 @@ def:pub app -> any {
                                 ) if tasksLoading else (
                                     <div>
                                         {[
-                                            <div className="space-section" key={space.id}>
-                                                <div className="space-section-header">
-                                                    <div className={"space-dot space-color-" + space.color}></div>
-                                                    <span className="space-section-title">{space.name}</span>
+                                            <div className="list-section" key={lst.id}>
+                                                <div className="list-section-header">
+                                                    <span className="list-section-title">{lst.name}</span>
                                                     <span className="task-count">
-                                                        {len(lists.filter(lambda l: any -> bool { return l.space_id == space.id; }))} lists
+                                                        {len(tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; }))} tasks
                                                     </span>
                                                     <button
-                                                        onClick={lambda -> None { createListForSpaceId = space.id; showCreateList = True; }}
-                                                        className="btn-text btn-xs space-section-add-list"
+                                                        onClick={lambda -> None { selectedListId = lst.id; showCreateTask = True; }}
+                                                        className="btn-text btn-xs"
                                                     >
-                                                        + List
+                                                        + New Task
                                                     </button>
                                                 </div>
-                                                <div className="space-section-body">
-                                                    {(
-                                                        <div className="list-empty-state">No lists in this space yet.</div>
-                                                    ) if len(lists.filter(lambda l: any -> bool { return l.space_id == space.id; })) == 0 else (
-                                                        <div>
-                                                            {[
-                                                                <div className="list-section" key={lst.id}>
-                                                                    <div className="list-section-header">
-                                                                        <span className="list-section-title">{lst.name}</span>
-                                                                        <span className="task-count">
-                                                                            {len(tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; }))} tasks
-                                                                        </span>
-                                                                        <button
-                                                                            onClick={lambda -> None { selectedListId = lst.id; showCreateTask = True; }}
-                                                                            className="btn-text btn-xs"
-                                                                        >
-                                                                            + New Task
-                                                                        </button>
-                                                                    </div>
-                                                                    {(
-                                                                        <div className="nested-board-wrap">
-                                                                            <KanbanBoard
-                                                                                tasks={tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; })}
-                                                                                onOpenDetail={openTask}
-                                                                                onStatusChange={updateTaskStatus}
-                                                                                onDelete={deleteTask}
-                                                                            />
-                                                                        </div>
-                                                                    ) if view == "board" else (
-                                                                        <div className="list-section-tasks">
-                                                                            {(
-                                                                                <div className="list-empty-tasks">No tasks yet.</div>
-                                                                            ) if len(tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; })) == 0 else (
-                                                                                <div>
-                                                                                    {[
-                                                                                        <TaskCard
-                                                                                            key={task.id}
-                                                                                            task={task}
-                                                                                            onOpenDetail={openTask}
-                                                                                            onStatusChange={updateTaskStatus}
-                                                                                            onDelete={deleteTask}
-                                                                                        /> for task in tasks if task.list_id == lst.id and task.parent_task_id == ""
-                                                                                    ]}
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                                for lst in lists if lst.space_id == space.id
-                                                            ]}
-                                                        </div>
-                                                    )}
-                                                </div>
+                                                {(
+                                                    <div className="nested-board-wrap">
+                                                        <KanbanBoard
+                                                            tasks={tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; })}
+                                                            onOpenDetail={openTask}
+                                                            onStatusChange={updateTaskStatus}
+                                                            onDelete={deleteTask}
+                                                        />
+                                                    </div>
+                                                ) if view == "board" else (
+                                                    <div className="list-section-tasks">
+                                                        {(
+                                                            <div className="list-empty-tasks">No tasks yet.</div>
+                                                        ) if len(tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; })) == 0 else (
+                                                            <div>
+                                                                {[
+                                                                    <TaskCard
+                                                                        key={task.id}
+                                                                        task={task}
+                                                                        onOpenDetail={openTask}
+                                                                        onStatusChange={updateTaskStatus}
+                                                                        onDelete={deleteTask}
+                                                                    /> for task in tasks if task.list_id == lst.id and task.parent_task_id == ""
+                                                                ]}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
-                                            for space in spaces
+                                            for lst in lists
                                         ]}
                                     </div>
                                 )}
@@ -480,7 +440,7 @@ def:pub app -> any {
             {(
                 <GlobalTaskModal
                     onClose={lambda -> None { showGlobalCreateTask = False; }}
-                    onCreated={lambda -> None { fetchSpaces(); fetchLists(); fetchTasks(); }}
+                    onCreated={lambda -> None { fetchLists(); fetchTasks(); }}
                 />
             ) if showGlobalCreateTask else None}
             {(
@@ -490,25 +450,6 @@ def:pub app -> any {
                     onCreate={createTask}
                 />
             ) if showCreateTask else None}
-            {(
-                <div className="modal-overlay" onClick={lambda -> None { showCreateSpace = False; }}>
-                    <div className="modal-box" onClick={lambda e: any -> None { e.stopPropagation(); }}>
-                        <div className="modal-header">
-                            <h3 className="modal-title">Create Space</h3>
-                            <button
-                                onClick={lambda -> None { showCreateSpace = False; }}
-                                className="btn-close"
-                            >
-                                <X size={16} />
-                            </button>
-                        </div>
-                        <CreateSpaceForm
-                            onClose={lambda -> None { showCreateSpace = False; }}
-                            onCreate={createSpace}
-                        />
-                    </div>
-                </div>
-            ) if showCreateSpace else None}
             {(
                 <div className="modal-overlay" onClick={lambda -> None { showCreateList = False; }}>
                     <div className="modal-box" onClick={lambda e: any -> None { e.stopPropagation(); }}>
@@ -522,7 +463,6 @@ def:pub app -> any {
                             </button>
                         </div>
                         <CreateListForm
-                            spaceId={createListForSpaceId}
                             onClose={lambda -> None { showCreateList = False; }}
                             onCreate={createList}
                         />
@@ -546,55 +486,13 @@ def:pub app -> any {
                     onViewPlan={lambda -> None { showConflictModal = False; view = "replanning"; }}
                 />
             ) if showConflictModal else None}
+            <ChatPanel
+                onTasksChanged={lambda -> None { fetchLists(); fetchTasks(); calendarRefreshKey = calendarRefreshKey + 1; }}
+            />
         </div>;
 }
 
-def:pub CreateSpaceForm(onClose: any, onCreate: any) -> any {
-    has name: str = "",
-        color: str = "purple";
-
-    return
-        <div>
-            <div className="modal-body">
-                <div className="form-field">
-                    <label className="form-label">Space Name</label>
-                    <input
-                        type="text"
-                        value={name}
-                        onChange={lambda e: any -> None { name = e.target.value; }}
-                        placeholder="e.g. Marketing, Engineering"
-                        className="form-input"
-                        autoFocus={True}
-                    />
-                </div>
-                <div className="form-field">
-                    <label className="form-label">Color</label>
-                    <div className="color-picker">
-                        {[
-                            <button
-                                key={c}
-                                className={("color-dot color-" + c + (" selected" if c == color else ""))}
-                                onClick={lambda -> None { color = c; }}
-                                title={c}
-                            /> for c in ["purple", "blue", "green", "red", "orange", "pink"]
-                        ]}
-                    </div>
-                </div>
-            </div>
-            <div className="modal-footer">
-                <button onClick={onClose} className="btn-secondary">Cancel</button>
-                <button
-                    onClick={lambda -> None { onCreate(name, color); onClose(); }}
-                    className="btn-primary"
-                    disabled={name.trim() == ""}
-                >
-                    Create Space
-                </button>
-            </div>
-        </div>;
-}
-
-def:pub CreateListForm(spaceId: str, onClose: any, onCreate: any) -> any {
+def:pub CreateListForm(onClose: any, onCreate: any) -> any {
     has name: str = "";
 
     return
@@ -615,7 +513,7 @@ def:pub CreateListForm(spaceId: str, onClose: any, onCreate: any) -> any {
             <div className="modal-footer">
                 <button onClick={onClose} className="btn-secondary">Cancel</button>
                 <button
-                    onClick={lambda -> None { onCreate(name, spaceId); onClose(); }}
+                    onClick={lambda -> None { onCreate(name); onClose(); }}
                     className="btn-primary"
                     disabled={name.trim() == ""}
                 >

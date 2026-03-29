@@ -1,13 +1,14 @@
 """Calendar view with week grid, unscheduled sidebar, drag-and-drop scheduling, and resize."""
 
-sv import from main { ListTasks, UpdateTaskLock, AIReplanSchedule, ApplyReplanChanges, RolloverPastTasks }
+sv import from main { ListTasks, ListTasksForDate, UpdateTaskLock, AIReplanSchedule, ApplyReplanChanges, RolloverPastTasks }
 import from .ExplanationPanel { ExplanationPanel }
 import from "lucide-react" { Lock, LockOpen, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle, XCircle, ChevronsRight }
 
 def:pub CalendarView(
     onUpdateTask: any,
     onOpenDetail: any,
-    explanationCache: dict
+    explanationCache: dict,
+    refreshKey: int = 0
 ) -> any {
     has weekOffset: int = 0,
         weekDates: list = [],
@@ -20,7 +21,6 @@ def:pub CalendarView(
         resizeCurrentEndTime: str = "",
         explanationTaskId: str = "",
         explanationPinned: bool = False,
-        hoverTimerId: int = 0,
         conflictingIds: list = [],
         replanBannerChanges: list = [],
         replanBannerExplanation: str = "",
@@ -34,6 +34,10 @@ def:pub CalendarView(
 
     can with [weekOffset] entry {
         computeWeekDates();
+    }
+
+    can with [refreshKey] entry {
+        if refreshKey > 0 { fetchTasks(); }
     }
 
     async def fetchTasks -> None {
@@ -177,19 +181,9 @@ def:pub CalendarView(
         endM = endTotalMins % 60;
         st = startH.toString().padStart(2, "0") + ":" + startM.toString().padStart(2, "0");
         et = endH.toString().padStart(2, "0") + ":" + endM.toString().padStart(2, "0");
-        droppedTaskId = draggingTaskId;
         draggingTaskId = "";
         await onUpdateTask(task.id, task.title, task.description, task.status, task.priority, task.due_date, dateStr, st, et);
         await fetchTasks();
-        replanResult = root spawn AIReplanSchedule(new_task_id=droppedTaskId);
-        if replanResult.reports {
-            proposal = replanResult.reports[0];
-            if proposal.has_conflict == True and Array.isArray(proposal.changes) and proposal.changes.length > 0 {
-                replanBannerChanges = proposal.changes;
-                replanBannerExplanation = (proposal.explanation + "") if proposal.explanation else "";
-                rejectedChangeIds = [];
-            }
-        }
     }
 
     def startResize(e: any, task: any) -> None {
@@ -245,23 +239,14 @@ def:pub CalendarView(
         return "";
     }
 
-    def handleTaskHover(task: any) -> None {
-        if hoverTimerId != 0 { clearTimeout(hoverTimerId); }
-        hoverTimerId = setTimeout(lambda -> None {
-            if not explanationPinned { explanationTaskId = task.id; }
-            hoverTimerId = 0;
-        }, 400);
-    }
-
-    def handleTaskLeave -> None {
-        if hoverTimerId != 0 { clearTimeout(hoverTimerId); hoverTimerId = 0; }
-        # Panel stays visible after hover — user can move cursor to it and click buttons
-        # Only explicit close/accept/reject hides it
-    }
-
     def handleTaskClick(task: any) -> None {
-        explanationTaskId = task.id;
-        explanationPinned = True;
+        if explanationTaskId == task.id and explanationPinned {
+            explanationTaskId = "";
+            explanationPinned = False;
+        } else {
+            explanationTaskId = task.id;
+            explanationPinned = True;
+        }
     }
 
     async def toggleLock(e: any, task: any) -> None {
@@ -598,8 +583,6 @@ def:pub CalendarView(
                                             height: getTaskHeight(task)
                                         }}
                                         draggable={(not task.is_locked)}
-                                        onMouseEnter={lambda e: any -> None { handleTaskHover(task); }}
-                                        onMouseLeave={lambda -> None { handleTaskLeave(); }}
                                         onDragStart={lambda e: any -> None {
                                             if task.is_locked { return; }
                                             draggingTaskId = task.id;

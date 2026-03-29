@@ -1,20 +1,14 @@
-"""Global task creation modal with inline space and list selection/creation."""
+"""Global task creation modal with list selection/creation."""
 
-sv import from main { ListSpaces, ListLists, CreateSpace, CreateList, CreateTask, AIExtractTaskFromTranscript, AIEstimateDuration }
+sv import from main { ListLists, CreateList, CreateTask }
 import from "lucide-react" { Mic, Square, X }
 
 def:pub GlobalTaskModal(
     onClose: any,
     onCreated: any
 ) -> any {
-    has selectedSpaceId: str = "",
-        selectedListId: str = "",
-        spaces: list = [],
+    has selectedListId: str = "",
         lists: list = [],
-
-        showNewSpace: bool = False,
-        newSpaceName: str = "",
-        newSpaceColor: str = "purple",
 
         showNewList: bool = False,
         newListName: str = "",
@@ -29,10 +23,6 @@ def:pub GlobalTaskModal(
         endTime: str = "",
         category: str = "",
         estimatedDuration: int = 60,
-        aiSuggestedMinutes: int = 0,
-        aiSuggestedRationale: str = "",
-        aiSuggestedConfidence: int = 0,
-        isEstimating: bool = False,
 
         isRecording: bool = False,
         isProcessingAudio: bool = False,
@@ -41,51 +31,26 @@ def:pub GlobalTaskModal(
         recognizerRef: any = None;
 
     can with entry {
-        fetchSpaces();
         fetchAllLists();
-    }
-
-    async def fetchSpaces -> None {
-        result = root spawn ListSpaces();
-        spaces = result.reports[0] if result.reports else [];
-        if len(spaces) == 1 {
-            selectedSpaceId = spaces[0].id;
-        }
     }
 
     async def fetchAllLists -> None {
         result = root spawn ListLists(space_id="");
         lists = result.reports[0] if result.reports else [];
-    }
-
-    async def handleCreateSpace -> None {
-        if not newSpaceName.trim() { return; }
-        result = root spawn CreateSpace(name=newSpaceName, color=newSpaceColor);
-        if result.reports {
-            s = result.reports[0];
-            spaces = spaces.concat([{
-                "id": s.id,
-                "name": s.name,
-                "color": s.color,
-                "description": s.description
-            }]);
-            selectedSpaceId = s.id;
-            selectedListId = "";
+        if len(lists) == 1 {
+            selectedListId = lists[0].id;
         }
-        newSpaceName = "";
-        newSpaceColor = "purple";
-        showNewSpace = False;
     }
 
     async def handleCreateList -> None {
-        if not newListName.trim() or selectedSpaceId == "" { return; }
-        result = root spawn CreateList(name=newListName, space_id=selectedSpaceId);
+        if not newListName.trim() { return; }
+        result = root spawn CreateList(name=newListName, space_id="");
         if result.reports {
             l = result.reports[0];
             lists = lists.concat([{
                 "id": l.id,
                 "name": l.name,
-                "space_id": l.space_id,
+                "space_id": "",
                 "color": l.color
             }]);
             selectedListId = l.id;
@@ -114,32 +79,9 @@ def:pub GlobalTaskModal(
         onClose();
     }
 
-    async def fetchAIDuration -> None {
-        if not title.trim() or category == "" { return; }
-        isEstimating = True;
-        result = root spawn AIEstimateDuration(task_title=title, category=category);
-        if result.reports {
-            d = result.reports[0];
-            aiSuggestedMinutes = d.suggested_minutes;
-            aiSuggestedRationale = d.rationale;
-            aiSuggestedConfidence = d.confidence_pct;
-        }
-        isEstimating = False;
-    }
-
     async def processTranscript(transcript: str) -> None {
         audioTranscript = transcript;
-        isProcessingAudio = True;
-        result = root spawn AIExtractTaskFromTranscript(transcript=transcript);
-        if result.reports {
-            data = result.reports[0];
-            title = data.title if data.title else title;
-            description = data.description if data.description else description;
-            status = data.status if data.status else status;
-            priority = data.priority if data.priority else priority;
-            dueDate = data.due_date if data.due_date else dueDate;
-        }
-        isProcessingAudio = False;
+        title = transcript;
     }
 
     def startRecording -> None {
@@ -175,12 +117,6 @@ def:pub GlobalTaskModal(
         isRecording = False;
     }
 
-    filteredLists = (
-        lists.filter(lambda l: any -> bool { return l.space_id == selectedSpaceId; })
-        if selectedSpaceId != ""
-        else []
-    );
-
     return
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal-box modal-global-task" onClick={lambda e: any -> None { e.stopPropagation(); }}>
@@ -192,92 +128,22 @@ def:pub GlobalTaskModal(
 
                     <div className="gtm-location-section">
                         <div className="form-field">
-                            <label className="form-label">Space</label>
-                            <div className="gtm-select-row">
-                                <select
-                                    value={selectedSpaceId}
-                                    onChange={lambda e: any -> None {
-                                        selectedSpaceId = e.target.value;
-                                        selectedListId = "";
-                                        showNewList = False;
-                                    }}
-                                    className="form-select"
-                                >
-                                    <option value="">— select space —</option>
-                                    {[
-                                        <option key={s.id} value={s.id}>{s.name}</option>
-                                        for s in spaces
-                                    ]}
-                                </select>
-                                <button
-                                    onClick={lambda -> None { showNewSpace = not showNewSpace; showNewList = False; }}
-                                    className={"btn-outline btn-sm" + (" active" if showNewSpace else "")}
-                                    title="Create a new space"
-                                >
-                                    + New
-                                </button>
-                            </div>
-                            {(
-                                <div className="inline-create-form">
-                                    <input
-                                        type="text"
-                                        value={newSpaceName}
-                                        onChange={lambda e: any -> None { newSpaceName = e.target.value; }}
-                                        placeholder="Space name"
-                                        className="form-input"
-                                        autoFocus={True}
-                                        onKeyPress={lambda e: any -> None { if e.key == "Enter" { handleCreateSpace(); } }}
-                                    />
-                                    <div className="color-picker">
-                                        {[
-                                            <button
-                                                key={c}
-                                                className={("color-dot color-" + c + (" selected" if c == newSpaceColor else ""))}
-                                                onClick={lambda -> None { newSpaceColor = c; }}
-                                                title={c}
-                                            /> for c in ["purple", "blue", "green", "red", "orange", "pink"]
-                                        ]}
-                                    </div>
-                                    <div className="inline-create-actions">
-                                        <button
-                                            onClick={lambda -> None { handleCreateSpace(); }}
-                                            className="btn-primary btn-sm"
-                                            disabled={newSpaceName.trim() == ""}
-                                        >
-                                            Create Space
-                                        </button>
-                                        <button
-                                            onClick={lambda -> None { showNewSpace = False; newSpaceName = ""; }}
-                                            className="btn-secondary btn-sm"
-                                        >
-                                            Cancel
-                                        </button>
-                                    </div>
-                                </div>
-                            ) if showNewSpace else None}
-                        </div>
-
-                        <div className="form-field">
                             <label className="form-label">List</label>
                             <div className="gtm-select-row">
                                 <select
                                     value={selectedListId}
                                     onChange={lambda e: any -> None { selectedListId = e.target.value; }}
                                     className="form-select"
-                                    disabled={selectedSpaceId == ""}
                                 >
-                                    <option value="">
-                                        {("— select list —" if selectedSpaceId != "" else "— select a space first —")}
-                                    </option>
+                                    <option value="">— select list —</option>
                                     {[
                                         <option key={l.id} value={l.id}>{l.name}</option>
-                                        for l in filteredLists
+                                        for l in lists
                                     ]}
                                 </select>
                                 <button
-                                    onClick={lambda -> None { showNewList = not showNewList; showNewSpace = False; }}
+                                    onClick={lambda -> None { showNewList = not showNewList; }}
                                     className={"btn-outline btn-sm" + (" active" if showNewList else "")}
-                                    disabled={selectedSpaceId == ""}
                                     title="Create a new list"
                                 >
                                     + New
@@ -322,7 +188,7 @@ def:pub GlobalTaskModal(
                                 onChange={lambda e: any -> None { title = e.target.value; }}
                                 placeholder="Task title"
                                 className="form-input task-title-input"
-                                autoFocus={not showNewSpace and not showNewList}
+                                autoFocus={not showNewList}
                             />
                             {(
                                 <button
@@ -344,18 +210,6 @@ def:pub GlobalTaskModal(
                                 </button>
                             )}
                         </div>
-                        {(
-                            <div className="audio-status">
-                                {(
-                                    <span className="audio-status-recording"><span className="audio-rec-dot"></span> Listening...</span>
-                                ) if isRecording else (
-                                    <span className="audio-status-processing">
-                                        <span className="audio-spinner"></span>
-                                        Extracting task details...
-                                    </span>
-                                ) if isProcessingAudio else None}
-                            </div>
-                        ) if isRecording or isProcessingAudio else None}
                         {(
                             <div className="audio-error">{audioError}</div>
                         ) if audioError != "" else None}
@@ -382,7 +236,6 @@ def:pub GlobalTaskModal(
                             <select
                                 value={category}
                                 onChange={lambda e: any -> None { category = e.target.value; }}
-                                onBlur={lambda -> None { fetchAIDuration(); }}
                                 className="form-select"
                             >
                                 <option value="">— select —</option>
@@ -403,21 +256,6 @@ def:pub GlobalTaskModal(
                                 className="form-input"
                                 min={1}
                             />
-                            {(
-                                <div className="ai-duration-suggestion">
-                                    {(
-                                        <span className="ai-duration-loading">AI estimating...</span>
-                                    ) if isEstimating else (
-                                        <span
-                                            className="ai-duration-badge"
-                                            title={aiSuggestedRationale}
-                                            onClick={lambda -> None { estimatedDuration = aiSuggestedMinutes; }}
-                                        >
-                                            AI suggests: {aiSuggestedMinutes.toString()} min ({aiSuggestedConfidence.toString()}% conf) — click to use
-                                        </span>
-                                    )}
-                                </div>
-                            ) if isEstimating or aiSuggestedMinutes > 0 else None}
                         </div>
                     </div>
                     <div className="form-row">

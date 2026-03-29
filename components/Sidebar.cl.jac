@@ -3,56 +3,46 @@
 import from "lucide-react" { List, X }
 
 def:pub Sidebar(
-    spaces: list,
     lists: list,
-    selectedSpaceId: str,
+    tasks: list,
     selectedListId: str,
-    spacesLoading: bool,
-    onSelectSpace: any,
+    listsLoading: bool,
     onSelectList: any,
-    onCreateSpace: any,
     onCreateList: any,
-    onDeleteSpace: any,
     onDeleteList: any
 ) -> any {
     return
         <div className="sidebar">
             <div className="sidebar-section">
                 <div className="sidebar-section-header">
-                    <span className="sidebar-section-title">SPACES</span>
+                    <span className="sidebar-section-title">LISTS</span>
                     <button
-                        onClick={onCreateSpace}
+                        onClick={onCreateList}
                         className="sidebar-add-btn"
-                        title="Create Space"
+                        title="Create List"
                     >
                         +
                     </button>
                 </div>
                 {(
                     <div className="sidebar-loading">Loading...</div>
-                ) if spacesLoading else (
+                ) if listsLoading else (
                     <div className="spaces-list">
                         {(
                             <div className="sidebar-empty">
-                                No spaces yet
+                                No lists yet
                             </div>
-                        ) if len(spaces) == 0 else (
+                        ) if len(lists) == 0 else (
                             <div>
                                 {[
-                                    <SpaceItem
-                                        key={space.id}
-                                        space={space}
-                                        lists={lists.filter(
-                                            lambda l: any -> bool { return l.space_id == space.id; }
-                                        )}
-                                        selectedSpaceId={selectedSpaceId}
+                                    <ListItem
+                                        key={lst.id}
+                                        lst={lst}
+                                        tasks={tasks}
                                         selectedListId={selectedListId}
-                                        onSelectSpace={onSelectSpace}
                                         onSelectList={onSelectList}
-                                        onCreateList={onCreateList}
-                                        onDeleteSpace={onDeleteSpace}
                                         onDeleteList={onDeleteList}
-                                    /> for space in spaces
+                                    /> for lst in lists
                                 ]}
                             </div>
                         )}
@@ -62,67 +52,9 @@ def:pub Sidebar(
         </div>;
 }
 
-def:pub SpaceItem(
-    space: dict,
-    lists: list,
-    selectedSpaceId: str,
-    selectedListId: str,
-    onSelectSpace: any,
-    onSelectList: any,
-    onCreateList: any,
-    onDeleteSpace: any,
-    onDeleteList: any
-) -> any {
-    isExpanded = space.id == selectedSpaceId;
-    spaceClass = (
-        "space-row space-row-selected"
-        if isExpanded
-        else "space-row"
-    );
-
-    return
-        <div className="space-group">
-            <div className={spaceClass}>
-                <button
-                    className="space-row-main"
-                    onClick={lambda -> None { onSelectSpace(space.id); }}
-                >
-                    <span className={"space-dot space-color-" + space.color}></span>
-                    <span className="space-name">{space.name}</span>
-                    <span className="space-arrow">{("▾" if isExpanded else "▸")}</span>
-                </button>
-                <button
-                    onClick={lambda -> None { onDeleteSpace(space.id); }}
-                    className="sidebar-delete-btn"
-                    title="Delete space"
-                >
-                    <X size={14} />
-                </button>
-            </div>
-            {(
-                <div className="lists-group">
-                    {[
-                        <ListItem
-                            key={lst.id}
-                            lst={lst}
-                            selectedListId={selectedListId}
-                            onSelectList={onSelectList}
-                            onDeleteList={onDeleteList}
-                        /> for lst in lists
-                    ]}
-                    <button
-                        onClick={lambda -> None { onCreateList(space.id); }}
-                        className="add-list-btn"
-                    >
-                        + Add List
-                    </button>
-                </div>
-            ) if isExpanded else None}
-        </div>;
-}
-
 def:pub ListItem(
     lst: dict,
+    tasks: list,
     selectedListId: str,
     onSelectList: any,
     onDeleteList: any
@@ -132,6 +64,7 @@ def:pub ListItem(
         if lst.id == selectedListId
         else "list-row"
     );
+    taskCount = len(tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; }));
 
     return
         <div className={listClass}>
@@ -141,6 +74,7 @@ def:pub ListItem(
             >
                 <List size={14} className="list-icon" />
                 <span className="list-name">{lst.name}</span>
+                <span className="task-count">{taskCount}</span>
             </button>
             <button
                 onClick={lambda -> None { onDeleteList(lst.id); }}

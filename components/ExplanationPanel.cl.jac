@@ -22,29 +22,16 @@ def:pub ExplanationPanel(
         alternativeSlots: list = [];
 
     can with entry {
-        if not cachedData {
-            fetchExplanation();
-        }
+        # AI explanation disabled — panel shows static info only
+        loading = False;
     }
 
     async def fetchExplanation -> None {
-        loading = True;
-        result = root spawn AIExplainSchedule(task_id=task.id);
-        if result.reports {
-            explanation = result.reports[0];
-            if onCached { onCached(explanation); }
-        }
         loading = False;
     }
 
     async def handleReject -> None {
-        showRejectionView = True;
-        altSlotsLoading = True;
-        result = root spawn AIGetAlternativeSlots(task_id=task.id);
-        if result.reports and result.reports[0].slots {
-            alternativeSlots = result.reports[0].slots;
-        }
-        altSlotsLoading = False;
+        if onClose { onClose("rejected"); }
     }
 
     async def applyAlternativeSlot(slot: any) -> None {

@@ -1,10 +1,9 @@
-"""Central task dashboard across all spaces and lists."""
+"""Central task dashboard across all lists."""
 
-sv import from main { ListTasks, ListSpaces, ListLists }
+sv import from main { ListTasks, ListLists }
 
 def:pub DashboardView(onOpenDetail: any) -> any {
     has tasks: list = [],
-        spaces: list = [],
         lists: list = [],
         filterStatus: str = "",
         filterPriority: str = "",
@@ -18,10 +17,8 @@ def:pub DashboardView(onOpenDetail: any) -> any {
     async def fetchAll -> None {
         loading = True;
         rT = root spawn ListTasks(list_id="");
-        rS = root spawn ListSpaces();
         rL = root spawn ListLists(space_id="");
         tasks = rT.reports[0] if rT.reports else [];
-        spaces = rS.reports[0] if rS.reports else [];
         lists = rL.reports[0] if rL.reports else [];
         loading = False;
     }
@@ -41,24 +38,8 @@ def:pub DashboardView(onOpenDetail: any) -> any {
         return filtered;
     }
 
-    def getListsForSpace(spaceId: str) -> list {
-        return lists.filter(lambda l: any -> bool { return l.space_id == spaceId; });
-    }
-
     def getTasksForList(listId: str, ft: list) -> list {
         return ft.filter(lambda t: any -> bool { return t.list_id == listId; });
-    }
-
-    def spaceHasTasks(spaceId: str, ft: list) -> bool {
-        sl = getListsForSpace(spaceId);
-        ids = sl.map(lambda l: any -> str { return l.id; });
-        return len(ft.filter(lambda t: any -> bool { return ids.includes(t.list_id); })) > 0;
-    }
-
-    def spaceTaskCount(spaceId: str, ft: list) -> int {
-        sl = getListsForSpace(spaceId);
-        ids = sl.map(lambda l: any -> str { return l.id; });
-        return len(ft.filter(lambda t: any -> bool { return ids.includes(t.list_id); }));
     }
 
     def countByStatus(s: str) -> int {
@@ -174,44 +155,33 @@ def:pub DashboardView(onOpenDetail: any) -> any {
                     ) if len(ft) == 0 else (
                         <div className="dash-spaces">
                             {[
-                                <div key={sp.id} className="dash-space-group">
-                                    <div className={"dash-space-hdr dash-sp-" + sp.color}>
-                                        <span className="dash-space-dot"></span>
-                                        <span className="dash-space-name">{sp.name}</span>
-                                        <span className="dash-space-cnt">{spaceTaskCount(sp.id, ft)}</span>
+                                <div key={lst.id} className="dash-list-group">
+                                    <div className="dash-list-hdr">
+                                        <span className="dash-list-name">{lst.name}</span>
+                                        <span className="dash-list-cnt">{len(getTasksForList(lst.id, ft))}</span>
                                     </div>
-                                    {[
-                                        <div key={lst.id} className="dash-list-group">
-                                            <div className="dash-list-hdr">
-                                                <span className="dash-list-name">{lst.name}</span>
-                                                <span className="dash-list-cnt">{len(getTasksForList(lst.id, ft))}</span>
+                                    <div className="dash-task-rows">
+                                        {[
+                                            <div
+                                                key={task.id}
+                                                className="dash-task-row"
+                                                onClick={lambda -> None { onOpenDetail(task); }}
+                                            >
+                                                <span className={"dash-pri-dot " + priClass(task.priority)} title={task.priority}></span>
+                                                <span className="dash-task-title">{task.title}</span>
+                                                <span className={"dash-task-st " + stClass(task.status)}>
+                                                    {stLabel(task.status)}
+                                                </span>
+                                                {(
+                                                    <span className="dash-task-due">{task.due_date}</span>
+                                                ) if task.due_date and task.due_date != "" else None}
                                             </div>
-                                            <div className="dash-task-rows">
-                                                {[
-                                                    <div
-                                                        key={task.id}
-                                                        className="dash-task-row"
-                                                        onClick={lambda -> None { onOpenDetail(task); }}
-                                                    >
-                                                        <span className={"dash-pri-dot " + priClass(task.priority)} title={task.priority}></span>
-                                                        <span className="dash-task-title">{task.title}</span>
-                                                        <span className={"dash-task-st " + stClass(task.status)}>
-                                                            {stLabel(task.status)}
-                                                        </span>
-                                                        {(
-                                                            <span className="dash-task-due">{task.due_date}</span>
-                                                        ) if task.due_date and task.due_date != "" else None}
-                                                    </div>
-                                                    for task in getTasksForList(lst.id, ft)
-                                                ]}
-                                            </div>
-                                        </div>
-                                        for lst in getListsForSpace(sp.id)
-                                        if len(getTasksForList(lst.id, ft)) > 0
-                                    ]}
+                                            for task in getTasksForList(lst.id, ft)
+                                        ]}
+                                    </div>
                                 </div>
-                                for sp in spaces
-                                if spaceHasTasks(sp.id, ft)
+                                for lst in lists
+                                if len(getTasksForList(lst.id, ft)) > 0
                             ]}
                         </div>
                     )}
