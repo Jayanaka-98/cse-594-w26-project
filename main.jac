@@ -865,7 +865,7 @@ def generate_schedule_explanation(
 ) -> ScheduleExplanation by llm(temperature=0.3);
 sem generate_schedule_explanation = "Generate a detailed, transparent explanation of why a task was scheduled at a particular time slot. The explanation is shown to the user in a panel with four sections: workload analysis, duration adjustment, deadline urgency, and scoring factors. Make the reasoning concrete and reference the user's actual patterns where available.";
 sem generate_schedule_explanation.historical_overrun_ratio = "Average ratio of actual/estimated duration for this task category. 1.0 means on-time, 1.4 means user takes 40% longer than estimated on average.";
-sem generate_schedule_explanation.surrounding_tasks = "Tasks scheduled in adjacent time slots, for workload context. Each has title, start_time, end_time.";
+sem generate_schedule_explanation.surrounding_tasks = "Tasks on the SAME DATE as the task being explained, scheduled within 3 hours before or after it. Use these as the actual workload context for this day. Each has title, start_time, end_time. Only reference tasks from this list — do not invent or reference tasks from other days.";
 
 def detect_schedule_conflicts_and_replan(
     new_task: dict,
@@ -1008,6 +1008,7 @@ walker:priv AIExplainSchedule {
         } elif here.start_date != "" and here.start_time != "" {
             self.surrounding.append({
                 "title": here.title,
+                "start_date": here.start_date,
                 "start_time": here.start_time,
                 "end_time": here.end_time
             });
@@ -1039,6 +1040,18 @@ walker:priv AIExplainSchedule {
             "start_time": self.target_start_time,
             "end_time": self.target_end_time
         };
+        # Filter surrounding to same date only, then narrow to tasks within 3 hours of target slot
+        target_parts = self.target_start_time.split(":") if self.target_start_time else ["0", "0"];
+        target_mins = int(target_parts[0]) * 60 + int(target_parts[1]);
+        same_day_adjacent = [];
+        for s in self.surrounding {
+            if s.get("start_date", "") != self.target_start_date { continue; }
+            s_parts = s["start_time"].split(":");
+            s_mins = int(s_parts[0]) * 60 + int(s_parts[1]);
+            if abs(s_mins - target_mins) <= 180 {
+                same_day_adjacent.append({"title": s["title"], "start_time": s["start_time"], "end_time": s["end_time"]});
+            }
+        }
         explanation = generate_schedule_explanation(
             task_title=self.target_title,
             category=self.target_category,
@@ -1047,7 +1060,7 @@ walker:priv AIExplainSchedule {
             historical_overrun_ratio=overrun_ratio,
             productivity_peaks=self.user_peaks,
             due_date=self.target_due_date,
-            surrounding_tasks=self.surrounding
+            surrounding_tasks=same_day_adjacent
         );
         result_dict = {
             "headline": explanation.headline,
@@ -1094,6 +1107,7 @@ walker:priv GenerateAllExplanations {
         if here.start_date != "" and here.start_time != "" and here.status != "done" {
             self.surrounding.append({
                 "title": here.title,
+                "start_date": here.start_date,
                 "start_time": here.start_time,
                 "end_time": here.end_time
             });
@@ -1127,10 +1141,18 @@ walker:priv GenerateAllExplanations {
                 "start_time": t["start_time"],
                 "end_time": t["end_time"]
             };
-            surrounding_others = [
-                s for s in self.surrounding
-                if not (s["start_time"] == t["start_time"] and s["title"] == t["title"])
-            ];
+            t_parts = t["start_time"].split(":");
+            t_mins = int(t_parts[0]) * 60 + int(t_parts[1]);
+            surrounding_others = [];
+            for s in self.surrounding {
+                if s.get("start_date", "") != t["start_date"] { continue; }
+                if s["title"] == t["title"] and s["start_time"] == t["start_time"] { continue; }
+                s_parts = s["start_time"].split(":");
+                s_mins = int(s_parts[0]) * 60 + int(s_parts[1]);
+                if abs(s_mins - t_mins) <= 180 {
+                    surrounding_others.append({"title": s["title"], "start_time": s["start_time"], "end_time": s["end_time"]});
+                }
+            }
             explanation = generate_schedule_explanation(
                 task_title=t["title"],
                 category=t["category"],
