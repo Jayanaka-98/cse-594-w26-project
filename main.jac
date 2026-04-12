@@ -9,6 +9,12 @@ import from json { dumps as json_dumps, loads as json_loads }
 
 glob llm = Model(model_name="gpt-4o-mini");
 
+enum ScheduleSource {
+    USER = "user",
+    AI_OPTIMIZED = "ai_optimized",
+    UNSCHEDULED = ""
+}
+
 # Client-side UI
 cl {
     import from frontend { app as ClientApp }
@@ -52,7 +58,8 @@ node Task {
         category: str = "",
         is_locked: bool = False,
         ai_confidence: int = 0,
-        ai_explanation: str = "";
+        ai_explanation: str = "",
+        schedule_source: ScheduleSource = ScheduleSource.UNSCHEDULED;
 }
 
 node TaskHistory {
@@ -344,12 +351,14 @@ walker:priv CreateTask {
             global task_counter;
             task_counter += 1;
             new_id = "task_" + str(task_counter);
+            src = ScheduleSource.USER if (self.start_date != "" and self.start_time != "") else ScheduleSource.UNSCHEDULED;
             new_task = here ++> Task(
                 id=new_id, title=self.title, description=self.description,
                 status=self.status, priority=self.priority, due_date=self.due_date,
                 list_id=self.list_id, parent_task_id=self.parent_task_id,
                 start_date=self.start_date, start_time=self.start_time, end_time=self.end_time,
-                estimated_duration=self.estimated_duration, category=self.category
+                estimated_duration=self.estimated_duration, category=self.category,
+                schedule_source=src
             );
             if new_task {
                 self.created = True;
@@ -363,7 +372,8 @@ walker:priv CreateTask {
                     "end_time": new_task[0].end_time, "estimated_duration": new_task[0].estimated_duration,
                     "actual_duration": new_task[0].actual_duration, "category": new_task[0].category,
                     "is_locked": new_task[0].is_locked, "ai_confidence": new_task[0].ai_confidence,
-                    "ai_explanation": new_task[0].ai_explanation
+                    "ai_explanation": new_task[0].ai_explanation,
+                    "schedule_source": new_task[0].schedule_source.value
                 };
             }
         } else {
@@ -382,12 +392,14 @@ walker:priv CreateTask {
             global task_counter;
             task_counter += 1;
             new_id = "task_" + str(task_counter);
+            src = ScheduleSource.USER if (self.start_date != "" and self.start_time != "") else ScheduleSource.UNSCHEDULED;
             new_task = here ++> Task(
                 id=new_id, title=self.title, description=self.description,
                 status=self.status, priority=self.priority, due_date=self.due_date,
                 list_id=self.list_id, parent_task_id=self.parent_task_id,
                 start_date=self.start_date, start_time=self.start_time, end_time=self.end_time,
-                estimated_duration=self.estimated_duration, category=self.category
+                estimated_duration=self.estimated_duration, category=self.category,
+                schedule_source=src
             );
             if new_task {
                 self.created = True;
@@ -401,7 +413,8 @@ walker:priv CreateTask {
                     "end_time": new_task[0].end_time, "estimated_duration": new_task[0].estimated_duration,
                     "actual_duration": new_task[0].actual_duration, "category": new_task[0].category,
                     "is_locked": new_task[0].is_locked, "ai_confidence": new_task[0].ai_confidence,
-                    "ai_explanation": new_task[0].ai_explanation
+                    "ai_explanation": new_task[0].ai_explanation,
+                    "schedule_source": new_task[0].schedule_source.value
                 };
             }
         }
@@ -454,7 +467,8 @@ walker:priv ListTasks {
                 "category": here.category,
                 "is_locked": here.is_locked,
                 "ai_confidence": here.ai_confidence,
-                "ai_explanation": here.ai_explanation
+                "ai_explanation": here.ai_explanation,
+                "schedule_source": here.schedule_source.value
             });
         }
     }
@@ -498,7 +512,8 @@ walker:priv ListTasksForDate {
             "category": here.category,
             "is_locked": here.is_locked,
             "ai_confidence": here.ai_confidence,
-            "ai_explanation": here.ai_explanation
+            "ai_explanation": here.ai_explanation,
+            "schedule_source": here.schedule_source.value
         });
     }
 
@@ -537,12 +552,21 @@ walker:priv UpdateTask {
     can do_update with Task entry {
         if here.id == self.task_id {
             self.old_start_date = here.start_date;
+            scheduling_changed = (here.start_date != self.start_date or here.start_time != self.start_time
+                    or here.end_time != self.end_time);
             # Clear explanation if any scheduling-relevant field changed
-            if (here.start_date != self.start_date or here.start_time != self.start_time
-                    or here.end_time != self.end_time or here.estimated_duration != self.estimated_duration
+            if (scheduling_changed or here.estimated_duration != self.estimated_duration
                     or here.category != self.category or here.title != self.title) {
                 here.ai_explanation = "";
                 here.ai_confidence = 0;
+            }
+            # Update schedule_source when the time slot changes
+            if scheduling_changed {
+                if self.start_date != "" and self.start_time != "" {
+                    here.schedule_source = ScheduleSource.USER;
+                } else {
+                    here.schedule_source = ScheduleSource.UNSCHEDULED;
+                }
             }
             here.title = self.title;
             here.description = self.description;
@@ -572,7 +596,8 @@ walker:priv UpdateTask {
                 "category": here.category,
                 "is_locked": here.is_locked,
                 "ai_confidence": here.ai_confidence,
-                "ai_explanation": here.ai_explanation
+                "ai_explanation": here.ai_explanation,
+                "schedule_source": here.schedule_source.value
             };
         }
     }
@@ -846,11 +871,13 @@ def suggest_alternative_slots(
     estimated_duration_minutes: int,
     original_slot: dict,
     existing_schedule: list[dict],
+    category_overrun_ratios: dict,
     user_productivity_peaks: dict
 ) -> AlternativeSlots by llm(temperature=0.3);
-sem suggest_alternative_slots = "The user rejected the AI's suggested schedule for their task. Suggest exactly 3 alternative time slots as replacements. Each slot must avoid conflicts with existing_schedule. Prefer slots near the user's productivity peaks for this category. Do not repeat the original_slot. Sort alternatives by productivity_score descending.";
-sem suggest_alternative_slots.original_slot = "The slot the user rejected, with start_date, start_time, end_time fields";
-sem suggest_alternative_slots.existing_schedule = "Currently scheduled tasks with start_date, start_time, end_time, title fields. Avoid overlaps.";
+sem suggest_alternative_slots = "Suggest exactly 3 alternative time slots for the task. Each suggested slot MUST NOT overlap with any existing task's effective occupied window. A task's effective window is [start_time, start_time + estimated_duration * overrun_ratio] where overrun_ratio comes from category_overrun_ratios (default 1.1 if category not listed). Compute the effective end time for every existing task before placing a new slot. Do not repeat the original_slot. Prefer slots near the user's productivity peaks for this category. Sort alternatives by productivity_score descending.";
+sem suggest_alternative_slots.original_slot = "The current slot being reconsidered, with start_date, start_time, end_time fields. Do not suggest this slot.";
+sem suggest_alternative_slots.existing_schedule = "All currently scheduled tasks. Each entry has: title, start_date, start_time, end_time, estimated_duration (minutes), category. Use estimated_duration and category_overrun_ratios to compute each task's effective occupied window before deciding if a slot is free.";
+sem suggest_alternative_slots.category_overrun_ratios = "Dict mapping category name to overrun multiplier (e.g. {'Coding': 1.42, 'Meeting': 1.08}). Apply to estimated_duration to get the real occupied time. Use 1.1 for any category not listed.";
 sem suggest_alternative_slots.user_productivity_peaks = "Dict mapping hour (0-23 as string keys) to productivity score (0-100). Empty dict if no data.";
 
 def generate_schedule_explanation(
@@ -1187,6 +1214,7 @@ walker:priv AIGetAlternativeSlots {
     has task_id: str;
     has all_tasks: list = [];
     has user_peaks: dict = {};
+    has cat_ratios: dict = {};
     has target_found: bool = False;
     has target_title: str = "";
     has target_category: str = "";
@@ -1217,18 +1245,21 @@ walker:priv AIGetAlternativeSlots {
             self.target_start_time = here.start_time;
             self.target_end_time = here.end_time;
         }
-        if here.start_date != "" and here.start_time != "" and here.id != self.task_id {
+        if here.start_date != "" and here.start_time != "" and here.id != self.task_id and here.status != "done" {
             self.all_tasks.append({
                 "title": here.title,
                 "start_date": here.start_date,
                 "start_time": here.start_time,
-                "end_time": here.end_time
+                "end_time": here.end_time,
+                "estimated_duration": here.estimated_duration,
+                "category": here.category
             });
         }
     }
 
     can collect_patterns with UserPatterns entry {
         self.user_peaks = here.productivity_peaks;
+        self.cat_ratios = here.category_overrun_ratios;
     }
 
     can finalize with Root exit {
@@ -1236,6 +1267,9 @@ walker:priv AIGetAlternativeSlots {
             report {"slots": []};
             return;
         }
+        # Merge user's real overrun ratios with hardcoded defaults for any missing categories
+        default_ratios = {"Coding": 1.42, "Research": 1.35, "Writing": 1.22, "Meeting": 1.08, "Admin": 1.05};
+        merged_ratios = {**default_ratios, **self.cat_ratios};
         original = {
             "start_date": self.target_start_date,
             "start_time": self.target_start_time,
@@ -1247,6 +1281,7 @@ walker:priv AIGetAlternativeSlots {
             estimated_duration_minutes=self.target_duration,
             original_slot=original,
             existing_schedule=self.all_tasks,
+            category_overrun_ratios=merged_ratios,
             user_productivity_peaks=self.user_peaks
         );
         report {
@@ -1534,6 +1569,7 @@ walker:priv ApplyReplanChanges {
                 here.start_time = change["new_start_time"];
                 here.end_time = change["new_end_time"];
                 here.ai_explanation = "";
+                here.schedule_source = ScheduleSource.AI_OPTIMIZED;
             }
         }
         report {"applied": True};
@@ -2063,7 +2099,9 @@ def detect_conflicts_with_overrun(tasks: list) -> list {
 
 def compute_blocked_slots(tasks: list, movable_ids: list) -> list {
     # Include effective windows of ALL tasks NOT being rescheduled this pass
-    # so the LLM knows every occupied slot and can avoid placing tasks there
+    # so the LLM knows every occupied slot and can avoid placing tasks there.
+    # effective_end = MAX(actual end_time, start_time + estimated_duration * overrun_ratio)
+    # This ensures the blocked window covers both the calendar-visible end and the overrun.
     default_ratios = {"Coding": 1.42, "Research": 1.35, "Writing": 1.22, "Meeting": 1.08, "Admin": 1.05};
     blocked = [];
     for t in tasks {
@@ -2074,6 +2112,12 @@ def compute_blocked_slots(tasks: list, movable_ids: list) -> list {
         dur = t.get("estimated_duration") or 60;
         ratio = default_ratios.get(t.get("category", ""), 1.1);
         eff_end_mins = start_mins + int(dur * ratio + 0.5);
+        # Also respect the task's explicit end_time if it extends further
+        if t.get("end_time") {
+            ep = t["end_time"].split(":");
+            explicit_end = int(ep[0]) * 60 + int(ep[1]);
+            if explicit_end > eff_end_mins { eff_end_mins = explicit_end; }
+        }
         eff_end_str = str(eff_end_mins // 60).zfill(2) + ":" + str(eff_end_mins % 60).zfill(2);
         blocked.append({
             "task_id": t["id"], "title": t["title"],
@@ -2114,9 +2158,10 @@ def optimize_conflicted_schedule(
     blocked_slots: list[dict],
     user_productivity_peaks: dict
 ) -> ScheduleOptimization by llm(temperature=0.2);
-sem optimize_conflicted_schedule = "Reschedule ONLY the tasks in conflicting_task_ids so that none of their effective time windows overlap with each other or with any entry in blocked_slots. A task's effective window is [start_time, start_time + estimated_duration * overrun_ratio] where overrun_ratios are Coding=1.42, Research=1.35, Writing=1.22, Meeting=1.08, Admin=1.05, others=1.1. For each conflicting task, pick a new start_time such that its effective window [new_start, new_start + estimated_duration * ratio] does not overlap with ANY blocked_slot's [start_time, effective_end_time] on the same date. Also ensure the conflicting tasks do not overlap with each other after rescheduling. Align with user productivity peaks and group similar categories where possible.";
-sem optimize_conflicted_schedule.current_schedule = "All scheduled tasks. Only move tasks whose id is in conflicting_task_ids — all others stay fixed.";
+sem optimize_conflicted_schedule = "Reschedule ONLY the tasks provided in current_schedule (which are exactly the conflicting tasks) to resolve all time overlaps. STEP 1: Treat every entry in blocked_slots as an immovable hard constraint — no rescheduled task may start before that entry's effective_end_time on the same date. STEP 2: A rescheduled task's own effective window is [new_start_time, new_start_time + estimated_duration * overrun_ratio] where overrun_ratios: Coding=1.42, Research=1.35, Writing=1.22, Meeting=1.08, Admin=1.05, others=1.1. STEP 3: Choose new_start_time so that: (a) the task's effective window [new_start, new_start + dur*ratio] does not overlap ANY blocked_slot's [start_time, effective_end_time] on the same date, AND (b) rescheduled tasks do not overlap each other. Set new_end_time = new_start_time + estimated_duration (no overrun, just raw duration). Align with productivity peaks and keep tasks within reasonable working hours (07:00-22:00).";
+sem optimize_conflicted_schedule.current_schedule = "Only the tasks that must be rescheduled (exactly the tasks in conflicting_task_ids). All other fixed tasks are represented in blocked_slots as hard constraints.";
 sem optimize_conflicted_schedule.conflicting_task_ids = "Exactly these task IDs must be rescheduled. Do not move any task not in this list.";
+sem optimize_conflicted_schedule.locked_task_ids = "ABSOLUTE CONSTRAINT: these task IDs must NEVER be moved or rescheduled under any circumstances. They are immovable anchors. If a conflicting_task_id also appears here, treat it as fixed and move the other conflicting task instead.";
 sem optimize_conflicted_schedule.blocked_slots = "HARD CONSTRAINTS: occupied windows of every non-conflicting task, including overrun. Each entry has start_time and effective_end_time on a given date. No rescheduled task's effective window may overlap any of these. is_locked=true entries are especially critical.";
 sem optimize_conflicted_schedule.user_productivity_peaks = "Dict mapping hour (0-23 as string keys) to productivity score (0-100). Use this to place demanding tasks in high-score slots.";
 
@@ -2176,46 +2221,71 @@ walker:priv AIOptimizeSchedule {
             return;
         }
 
-        MAX_ITER = 3;
-        virtual_schedule = [dict(t) for t in self.all_tasks];
-        current_conflict_ids = list(self.conflicting_task_ids);
+        MAX_ITER = 4;   # iterations per attempt
+        MAX_RETRIES = 3; # full retry attempts if result still has conflicts
+        base_conflict_ids = [cid for cid in self.conflicting_task_ids if cid not in self.locked_ids];
         merged_changes = {};
         final_overview = "";
         final_optimizations = [];
+        current_conflict_ids = [];
 
-        for iteration in range(MAX_ITER) {
-            if len(current_conflict_ids) == 0 { break; }
-            blocked = compute_blocked_slots(virtual_schedule, current_conflict_ids);
-            optimization = optimize_conflicted_schedule(
-                current_schedule=virtual_schedule,
-                conflicting_task_ids=current_conflict_ids,
-                locked_task_ids=self.locked_ids,
-                blocked_slots=blocked,
-                user_productivity_peaks=self.user_peaks
-            );
-            if iteration == 0 {
-                final_overview = optimization.overview;
-                final_optimizations = optimization.optimizations;
-            }
-            for change in optimization.changes {
-                cid = change.task_id;
-                merged_changes[cid] = {
-                    "task_id": cid,
-                    "task_title": change.task_title,
-                    "new_start_date": change.new_start_date,
-                    "new_start_time": change.new_start_time,
-                    "new_end_time": change.new_end_time,
-                    "reason": change.reason
-                };
-                for t in virtual_schedule {
-                    if t["id"] == cid and not t.get("is_locked", False) {
-                        t["start_date"] = change.new_start_date;
-                        t["start_time"] = change.new_start_time;
-                        t["end_time"] = change.new_end_time;
+        for retry in range(MAX_RETRIES) {
+            # Reset virtual schedule and conflicts for each retry attempt
+            virtual_schedule = [dict(t) for t in self.all_tasks];
+            current_conflict_ids = [cid for cid in base_conflict_ids];
+            attempt_changes = {};
+
+            for iteration in range(MAX_ITER) {
+                if len(current_conflict_ids) == 0 { break; }
+                blocked = compute_blocked_slots(virtual_schedule, current_conflict_ids);
+                # Only pass the movable tasks to the LLM — fixed tasks are already fully
+                # described in blocked_slots with their effective windows. Passing all tasks
+                # causes contradictory info (end_time vs effective_end_time in blocked_slots)
+                # which causes the LLM to ignore blocked_slots constraints.
+                movable_schedule = [t for t in virtual_schedule if t["id"] in current_conflict_ids];
+                optimization = optimize_conflicted_schedule(
+                    current_schedule=movable_schedule,
+                    conflicting_task_ids=current_conflict_ids,
+                    locked_task_ids=self.locked_ids,
+                    blocked_slots=blocked,
+                    user_productivity_peaks=self.user_peaks
+                );
+                if retry == 0 and iteration == 0 {
+                    final_overview = optimization.overview;
+                    final_optimizations = optimization.optimizations;
+                }
+                for change in optimization.changes {
+                    cid = change.task_id;
+                    # Never record or apply a change to a locked task
+                    if cid in self.locked_ids { continue; }
+                    attempt_changes[cid] = {
+                        "task_id": cid,
+                        "task_title": change.task_title,
+                        "new_start_date": change.new_start_date,
+                        "new_start_time": change.new_start_time,
+                        "new_end_time": change.new_end_time,
+                        "reason": change.reason
+                    };
+                    for t in virtual_schedule {
+                        if t["id"] == cid {
+                            t["start_date"] = change.new_start_date;
+                            t["start_time"] = change.new_start_time;
+                            t["end_time"] = change.new_end_time;
+                        }
                     }
                 }
+                current_conflict_ids = detect_conflicts_with_overrun(virtual_schedule);
             }
-            current_conflict_ids = detect_conflicts_with_overrun(virtual_schedule);
+
+            # Conflict-free result — accept this attempt
+            if len(current_conflict_ids) == 0 {
+                merged_changes = attempt_changes;
+                break;
+            }
+            # Still conflicts — on final retry keep best attempt, otherwise loop again
+            if retry == MAX_RETRIES - 1 {
+                merged_changes = attempt_changes;
+            }
         }
 
         total_mins = 0;

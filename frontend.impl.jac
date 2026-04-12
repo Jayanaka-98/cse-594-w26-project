@@ -74,7 +74,6 @@ impl app.fetchTasks -> None {
     }
     detected = computeConflicts(tasks, overrunRatios);
     conflictInfo = detected;
-    conflictsActive = detected["tasks_affected"] > 0;
 }
 
 impl app.createList(name: str) -> None {
@@ -152,6 +151,10 @@ impl app.updateTask(taskId: str, title: str, description: str, status: str, prio
             editStartTime = updatedTask.start_time if updatedTask.start_time else "";
             editEndTime = updatedTask.end_time if updatedTask.end_time else "";
         }
+        # Invalidate explanation cache for this task and signal CalendarView to
+        # re-mount the explanation panel if it's currently open for this task.
+        explanationCache[taskId] = None;
+        calendarEvalBump = int(calendarEvalBump) + 1;
     }
     await fetchTasks();
 }

@@ -9,6 +9,7 @@ def:pub CalendarView(
     onOpenDetail: any,
     explanationCache: dict,
     refreshKey: int = 0,
+    evalBumpKey: int = 0,
     externalReplan: any = None
 ) -> any {
     has weekOffset: int = 0,
@@ -22,6 +23,7 @@ def:pub CalendarView(
         resizeOriginalStart: str = "",
         resizeCurrentEndTime: str = "",
         explanationTaskId: str = "",
+        explanationEvalVersion: int = 0,
         conflictingIds: list = [],
         replanBannerChanges: list = [],
         replanBannerExplanation: str = "",
@@ -48,6 +50,14 @@ def:pub CalendarView(
         if refreshKey > 0 { fetchTasks(); }
     }
 
+    can with [evalBumpKey] entry {
+        # Parent cleared the explanation cache for a task that was just edited —
+        # re-mount the panel so it fetches a fresh AI explanation.
+        if evalBumpKey > 0 and explanationTaskId != "" {
+            explanationEvalVersion = explanationEvalVersion + 1;
+        }
+    }
+
     can with [externalReplan] entry {
         if externalReplan and externalReplan["changes"] {
             replanBannerChanges = externalReplan["changes"];
@@ -62,7 +72,7 @@ def:pub CalendarView(
         result = root spawn ListTasks(list_id="");
         loaded = result.reports[0] if result.reports else [];
         internalTasks = loaded;
-        conflictingIds = computeLocalConflicts(loaded);
+        conflictingIds = [];
         if firstLoad {
             firstLoad = False;
             scrollToNow();
@@ -328,12 +338,28 @@ def:pub CalendarView(
         return "";
     }
 
+    def handleExplanationClose(reason: str) {
+        if reason == "reeval" {
+            explanationCache[explanationTaskId] = None;
+            explanationEvalVersion = explanationEvalVersion + 1;
+            fetchTasks();
+        } else {
+            explanationTaskId = "";
+        }
+    }
+
     def handleTaskClick(task: any) -> None {
+        el = document.querySelector(".cal-grid-scroll");
+        savedScroll = el.scrollTop if el else 0;
         if explanationTaskId == task.id {
             explanationTaskId = "";
         } else {
             explanationTaskId = task.id;
         }
+        setTimeout(lambda {
+            el2 = document.querySelector(".cal-grid-scroll");
+            if el2 { el2.scrollTop = savedScroll; }
+        }, 0);
     }
 
     async def toggleLock(e: any, task: any) -> None {
@@ -440,7 +466,8 @@ def:pub CalendarView(
         replanBannerChanges = [];
         replanBannerExplanation = "";
         rejectedChangeIds = [];
-        result = root spawn AIOptimizeSchedule(conflicting_task_ids=conflictingIds, date_range=weekDates);
+        currentConflictIds = computeLocalConflicts(internalTasks);
+        result = root spawn AIOptimizeSchedule(conflicting_task_ids=currentConflictIds, date_range=weekDates);
         if result.reports and result.reports[0] {
             d = result.reports[0];
             changes = d["changes"] if d["changes"] else [];
@@ -472,14 +499,12 @@ def:pub CalendarView(
             {(
                 <div className="cal-explanation-wrapper">
                     <ExplanationPanel
-                        key={explanationTaskId}
+                        key={explanationTaskId + "_" + str(explanationEvalVersion)}
                         task={explanationTask}
                         cachedData={explanationCache[explanationTaskId] if explanationCache[explanationTaskId] else None}
                         onCached={lambda data: any -> None { explanationCache[explanationTaskId] = data; }}
-                        onClose={lambda reason: any -> None { explanationTaskId = ""; if reason == "applied" { fetchTasks(); } }}
-                        onAccept={lambda -> None { explanationTaskId = ""; fetchTasks(); }}
-                        onModify={lambda -> None { onOpenDetail(explanationTask); explanationTaskId = ""; }}
-                        onReject={lambda -> None { explanationTaskId = ""; }}
+                        onClose={handleExplanationClose}
+                        onModify={lambda -> None { onOpenDetail(explanationTask); }}
                     />
                 </div>
             ) if explanationTask != None else None}
@@ -722,7 +747,7 @@ def:pub CalendarView(
                                             onClick={lambda e: any -> None { toggleLock(e, task); }}
                                             title={("Unlock" if task.is_locked else "Lock position")}
                                         >
-                                            {(<Lock size={11} />) if task.is_locked else (<LockOpen size={11} />)}
+                                            {(<Lock size={13} />) if task.is_locked else (<LockOpen size={13} />)}
                                         </button>
                                         {(
                                             <div

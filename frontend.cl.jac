@@ -91,7 +91,8 @@ def:pub app -> any {
         aiPlan: any = None,
         aiPlanLoading: bool = False,
         explanationCache: dict = {},
-        calendarRefreshKey: int = 0;
+        calendarRefreshKey: int = 0,
+        calendarEvalBump: int = 0;
 
     can with entry {
         isLoggedIn = jacIsLoggedIn();
@@ -263,28 +264,6 @@ def:pub app -> any {
                     </div>
                 </div>
                 <div className="main-content">
-                    {(
-                        <div className="conflict-banner">
-                            <AlertTriangle size={16} className="conflict-banner-icon" />
-                            <span className="conflict-banner-text">
-                                <strong>Scheduling Conflict Active</strong>
-                                {" — Your current schedule has overlapping tasks. "}
-                                <button
-                                    className="conflict-banner-link"
-                                    onClick={lambda -> None { showConflictResolution = True; }}
-                                >
-                                    View & resolve
-                                </button>
-                                {" to resolve this conflict."}
-                            </span>
-                            <button
-                                className="conflict-banner-dismiss"
-                                onClick={lambda -> None { conflictsActive = False; }}
-                            >
-                                Dismiss
-                            </button>
-                        </div>
-                    ) if conflictsActive and view != "replanning" else None}
                     <div className="view-tab-bar">
                         <button
                             onClick={lambda -> None { view = "list"; }}
@@ -348,6 +327,7 @@ def:pub app -> any {
                             onOpenDetail={openTask}
                             explanationCache={explanationCache}
                             refreshKey={calendarRefreshKey}
+                            evalBumpKey={calendarEvalBump}
                             externalReplan={conflictReplan}
                         />
                     ) if view == "calendar" else (
@@ -502,14 +482,6 @@ def:pub app -> any {
             <ChatPanel
                 onTasksChanged={lambda -> None { fetchLists(); fetchTasks(); calendarRefreshKey = calendarRefreshKey + 1; }}
             />
-            {(
-                <ConflictResolutionModal
-                    conflictInfo={conflictInfo}
-                    conflictingTaskIds={conflictInfo["conflicting_ids"] if conflictInfo["conflicting_ids"] else []}
-                    onClose={lambda -> None { showConflictResolution = False; }}
-                    onResolved={lambda result: any -> None { conflictReplan = result; showConflictResolution = False; view = "calendar"; }}
-                />
-            ) if showConflictResolution else None}
         </div>;
 }
 

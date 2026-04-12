@@ -1509,18 +1509,37 @@ html, body, #root {
 /* ---- Lock button on calendar event ---- */
 .cal-event-lock {
     position: absolute;
-    top: 2px; right: 2px;
-    background: none;
-    border: none;
+    top: 3px; right: 3px;
+    background: rgba(0,0,0,0.25);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
     cursor: pointer;
-    font-size: 0.7rem;
-    opacity: 0;
-    padding: 1px;
+    opacity: 0.45;
+    padding: 2px 3px;
     line-height: 1;
-    transition: opacity 0.15s;
+    color: rgba(255,255,255,0.75);
+    transition: opacity 0.15s, background 0.15s, border-color 0.15s;
 }
-.cal-event:hover .cal-event-lock { opacity: 1; }
-.cal-event-lock-active { opacity: 1 !important; }
+.cal-event:hover .cal-event-lock {
+    opacity: 1;
+    background: rgba(0,0,0,0.45);
+    border-color: rgba(255,255,255,0.35);
+}
+.cal-event-lock:hover {
+    background: rgba(99,102,241,0.6) !important;
+    border-color: rgba(165,168,255,0.6) !important;
+    color: #fff !important;
+}
+.cal-event-lock-active {
+    opacity: 1 !important;
+    background: rgba(245,158,11,0.75) !important;
+    border-color: rgba(251,191,36,0.8) !important;
+    color: #fff !important;
+}
+.cal-event-lock-active:hover {
+    background: rgba(220,38,38,0.65) !important;
+    border-color: rgba(252,165,165,0.6) !important;
+}
 
 /* ---- Replan diff panel ---- */
 .cal-replan-panel {
@@ -1723,7 +1742,8 @@ html, body, #root {
 .exp-brain-icon { font-size: 1.3rem; }
 .exp-header-title-row { display: flex; align-items: center; gap: 0.5rem; }
 .exp-title-label { font-size: 0.78rem; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.05em; }
-.exp-pinned-badge { font-size: 0.7rem; background: rgba(99,102,241,0.2); color: #818cf8; border-radius: 4px; padding: 1px 6px; }
+.exp-pinned-badge { font-size: 0.7rem; background: rgba(99,102,241,0.2); color: #818cf8; border-radius: 4px; padding: 1px 6px; display: flex; align-items: center; gap: 3px; }
+.exp-ai-optimized-badge { font-size: 0.7rem; background: rgba(245,158,11,0.2); color: #f59e0b; border-radius: 4px; padding: 1px 6px; display: flex; align-items: center; gap: 3px; }
 .exp-task-name { font-size: 0.9rem; font-weight: 600; color: var(--text); margin-top: 2px; }
 .exp-header-actions { display: flex; align-items: center; gap: 0.4rem; }
 .exp-pin-btn, .exp-close-btn {
@@ -1861,10 +1881,40 @@ html, body, #root {
     cursor: pointer; font-size: 0.82rem; font-weight: 500;
     transition: opacity 0.15s;
 }
-.exp-btn-accept { background: #10b981; color: #fff; }
-.exp-btn-modify { background: #6366f1; color: #fff; }
+.exp-btn-accept { background: #10b981; color: #fff; display: flex; align-items: center; justify-content: center; gap: 0.3rem; }
+.exp-btn-modify { background: #6366f1; color: #fff; display: flex; align-items: center; justify-content: center; gap: 0.3rem; }
 .exp-btn-reject { background: var(--bg-raised); color: var(--text-2); border: 1px solid var(--border); }
+.exp-btn-find-slot {
+    flex: 1; padding: 0.4rem 0.75rem;
+    border: 1px solid #6366f1; border-radius: 6px;
+    background: transparent; color: #818cf8;
+    cursor: pointer; font-size: 0.82rem; font-weight: 500;
+    display: flex; align-items: center; justify-content: center; gap: 0.35rem;
+    transition: background 0.15s, color 0.15s;
+}
+.exp-btn-find-slot:hover { background: #6366f11a; }
+.exp-btn-find-slot:disabled { opacity: 0.5; cursor: default; }
+.exp-btn-see-all {
+    padding: 0.4rem 0.6rem;
+    border: none; border-radius: 6px;
+    background: transparent; color: var(--text-2);
+    cursor: pointer; font-size: 0.78rem;
+    white-space: nowrap;
+    transition: color 0.15s;
+}
+.exp-btn-see-all:hover { color: var(--text-1); }
 .exp-btn-accept:hover, .exp-btn-modify:hover { opacity: 0.85; }
+
+/* Inline suggestion bar */
+.exp-suggestion-bar {
+    display: flex; align-items: flex-start; gap: 0.5rem;
+    background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 8px; padding: 0.6rem 0.75rem; margin-bottom: 0.6rem;
+}
+.exp-suggestion-icon { color: #818cf8; flex-shrink: 0; margin-top: 2px; }
+.exp-suggestion-content { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.exp-suggestion-text { font-size: 0.82rem; font-weight: 600; color: var(--text-1); }
+.exp-suggestion-reason { font-size: 0.75rem; color: var(--text-2); line-height: 1.35; }
 
 /* Rejection view */
 .exp-rejection-view {

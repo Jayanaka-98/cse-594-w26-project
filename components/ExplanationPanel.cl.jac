@@ -1,22 +1,19 @@
-"""AI Scheduling Explanation Panel — hover/pin panel with 4 tabs and Accept/Modify/Reject."""
+"""AI Scheduling Explanation Panel — hover/pin panel with 4 tabs and Accept/Reject."""
 
-sv import from main { AIExplainSchedule, ApplyReplanChanges, AIGetAlternativeSlots, UpdateTask }
-import from "lucide-react" { Brain, Pin, PinOff, X, TrendingUp, Sparkles, Flag, Check, Pencil, ArrowLeft, Calendar }
+sv import from main { AIExplainSchedule, AIGetAlternativeSlots, UpdateTask }
+import from "lucide-react" { Brain, Pin, PinOff, X, TrendingUp, Sparkles, Flag, Check, Pencil, ArrowLeft, Calendar, Zap }
 
 def:pub ExplanationPanel(
     task: any,
     cachedData: any,
     onCached: any,
     onClose: any,
-    onAccept: any,
-    onModify: any,
-    onReject: any
+    onModify: any
 ) -> any {
     has activeTab: str = "workload",
         explanation: any = cachedData,
         loading: bool = (False if cachedData else True),
         isPinned: bool = False,
-        replanChanges: list = [],
         showRejectionView: bool = False,
         altSlotsLoading: bool = False,
         alternativeSlots: list = [];
@@ -34,7 +31,7 @@ def:pub ExplanationPanel(
         }
     }
 
-    async def fetchExplanation -> None {
+    async def fetchExplanation {
         loading = True;
         result = root spawn AIExplainSchedule(task_id=task.id);
         if result.reports and result.reports[0] {
@@ -45,11 +42,23 @@ def:pub ExplanationPanel(
         loading = False;
     }
 
-    async def handleReject -> None {
-        if onClose { onClose("rejected"); }
+    async def fetchAlternatives {
+        altSlotsLoading = True;
+        result = root spawn AIGetAlternativeSlots(task_id=task.id);
+        if result.reports and result.reports[0] {
+            slots = result.reports[0]["slots"] if result.reports[0]["slots"] else [];
+            alternativeSlots = slots;
+        }
+        altSlotsLoading = False;
     }
 
-    async def applyAlternativeSlot(slot: any) -> None {
+    async def handleFindBetterSlot {
+        if len(alternativeSlots) == 0 and not altSlotsLoading {
+            fetchAlternatives();
+        }
+    }
+
+    async def applyAlternativeSlot(slot: any) {
         root spawn UpdateTask(
             task_id=task.id,
             title=task.title,
@@ -63,7 +72,7 @@ def:pub ExplanationPanel(
             estimated_duration=(task.estimated_duration if task.estimated_duration else 60),
             category=(task.category if task.category else "")
         );
-        if onClose { onClose("applied"); }
+        if onClose { onClose("reeval"); }
     }
 
     def formatTime(t: str) -> str {
@@ -104,13 +113,14 @@ def:pub ExplanationPanel(
         return "Low";
     }
 
+    isAiOptimized = task.schedule_source == "ai_optimized";
     confidence = task.ai_confidence if task.ai_confidence else (explanation.productivity_score if explanation else 0);
     scheduledLabel = formatDate(task.start_date) + " · " + formatTime(task.start_time) if (task.start_date and task.start_time) else "Not scheduled";
+    bestSlot = alternativeSlots[0] if len(alternativeSlots) > 0 else None;
 
     return
         <div className="exp-overlay" onClick={lambda e: any -> None { e.stopPropagation(); }}>
             <div className="exp-panel">
-
 
                 <div className="exp-header">
                     <div className="exp-header-left">
@@ -121,6 +131,9 @@ def:pub ExplanationPanel(
                                 {(
                                     <span className="exp-pinned-badge"><Pin size={10} /> Pinned</span>
                                 ) if isPinned else None}
+                                {(
+                                    <span className="exp-ai-optimized-badge"><Zap size={10} /> AI Optimized</span>
+                                ) if isAiOptimized else None}
                             </div>
                             <div className="exp-task-name">{task.title}</div>
                         </div>
@@ -136,7 +149,6 @@ def:pub ExplanationPanel(
                         <button className="exp-close-btn" onClick={onClose}><X size={16} /></button>
                     </div>
                 </div>
-
 
                 <div className="exp-hero">
                     <div className="exp-confidence-ring" style={{"--conf-color": getConfidenceColor(confidence)}}>
@@ -168,15 +180,15 @@ def:pub ExplanationPanel(
                 </div>
 
                 {(
+                    # ── Rejection view: 3 alternatives + keep as is ──
                     <div className="exp-rejection-view">
                         <div className="exp-rejected-banner">
                             <X size={16} className="exp-rejected-icon" />
                             <div>
-                                <div className="exp-rejected-title">Suggestion Rejected</div>
-                                <div className="exp-rejected-sub">AI will learn from your preference.</div>
+                                <div className="exp-rejected-title">Choose a different slot</div>
+                                <div className="exp-rejected-sub">Pick an AI-suggested alternative or keep the current slot.</div>
                             </div>
                         </div>
-                        <p className="exp-alt-prompt">Choose an alternative slot or keep the original:</p>
                         {(
                             <div className="exp-loading">
                                 <div className="loading-spinner"></div>
@@ -203,7 +215,7 @@ def:pub ExplanationPanel(
                                 ]}
                                 <button className="exp-keep-original" onClick={onClose}>
                                     <span className="exp-keep-icon">⏱</span>
-                                    Keep original slot (no AI adjustment)
+                                    Keep current slot (no change)
                                 </button>
                             </div>
                         )}
@@ -221,9 +233,7 @@ def:pub ExplanationPanel(
                         <div className="exp-tabs">
                             {[
                                 {"id": "workload", "label": "Workload"},
-                                {"id": "duration", "label": "Duration"},
-                                {"id": "deadline", "label": "Deadline"},
-                                {"id": "factors",  "label": "Factors"}
+                                {"id": "deadline", "label": "Deadline"}
                             ].map(lambda tab: any -> any {
                                 return
                                     <button
@@ -387,27 +397,62 @@ def:pub ExplanationPanel(
                 )}
 
                 <div className="exp-footer">
-                    <p className="exp-footer-prompt">What would you like to do with this AI suggestion?</p>
-                    <div className="exp-footer-actions">
-                        <button
-                            className="exp-btn-accept"
-                            onClick={onAccept}
-                        >
-                            <Check size={14} /> Accept
-                        </button>
-                        <button
-                            className="exp-btn-modify"
-                            onClick={onModify}
-                        >
-                            <Pencil size={13} /> Modify
-                        </button>
-                        <button
-                            className="exp-btn-reject"
-                            onClick={lambda -> None { handleReject(); }}
-                        >
-                            <X size={13} /> Reject
-                        </button>
-                    </div>
+                    {(
+                        # Suggestion loaded — show inline with Accept
+                        <div>
+                            <div className="exp-suggestion-bar">
+                                <Zap size={13} className="exp-suggestion-icon" />
+                                <div className="exp-suggestion-content">
+                                    <span className="exp-suggestion-text">
+                                        {formatDate(bestSlot.start_date) + " · " + formatTime(bestSlot.start_time) + " — " + str(bestSlot.productivity_score) + "% productivity"}
+                                    </span>
+                                    <span className="exp-suggestion-reason">{bestSlot.reasoning}</span>
+                                </div>
+                            </div>
+                            <div className="exp-footer-actions">
+                                <button
+                                    className="exp-btn-accept"
+                                    onClick={lambda { applyAlternativeSlot(bestSlot); }}
+                                >
+                                    <Check size={14} /> Accept
+                                </button>
+                                <button
+                                    className="exp-btn-see-all"
+                                    onClick={lambda { showRejectionView = True; }}
+                                >
+                                    See all options
+                                </button>
+                                {(
+                                    <button className="exp-btn-modify" onClick={onModify}>
+                                        <Pencil size={13} /> Modify
+                                    </button>
+                                ) if not isAiOptimized else None}
+                            </div>
+                        </div>
+                    ) if bestSlot else (
+                        # Fetching in progress
+                        <div className="exp-footer-actions">
+                            <button className="exp-btn-find-slot" disabled={True}>
+                                <div className="loading-spinner loading-spinner-sm"></div>
+                                Finding slots...
+                            </button>
+                        </div>
+                    ) if altSlotsLoading else (
+                        # Default — show Find Better Slot button
+                        <div className="exp-footer-actions">
+                            <button
+                                className="exp-btn-find-slot"
+                                onClick={lambda { handleFindBetterSlot(); }}
+                            >
+                                <Zap size={13} /> Find Better Slot
+                            </button>
+                            {(
+                                <button className="exp-btn-modify" onClick={onModify}>
+                                    <Pencil size={13} /> Modify
+                                </button>
+                            ) if not isAiOptimized else None}
+                        </div>
+                    )}
                 </div>
 
             </div>
