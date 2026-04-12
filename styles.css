@@ -2764,6 +2764,55 @@ html, body, #root {
     30% { transform: translateY(-4px); opacity: 1; }
 }
 
+.chat-slot-picker {
+    border-top: 1px solid var(--border);
+    padding: 12px 14px;
+    background: var(--bg-card);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.chat-slot-picker-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-2);
+}
+.chat-slot-picker-options { display: flex; flex-direction: column; gap: 6px; }
+.chat-slot-option {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, background 0.15s;
+}
+.chat-slot-option:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-card); }
+.chat-slot-option:disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-slot-option-header { display: flex; align-items: center; gap: 6px; color: var(--text); }
+.chat-slot-date { font-size: 12px; font-weight: 600; }
+.chat-slot-time { font-size: 11px; color: var(--text-2); margin-left: auto; }
+.chat-slot-score { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-3); }
+.chat-slot-score-bar { height: 3px; border-radius: 2px; background: var(--accent); max-width: 60px; min-width: 4px; }
+.chat-slot-reason { font-size: 11px; color: var(--text-2); line-height: 1.4; }
+.chat-slot-keep {
+    font-size: 11px;
+    color: var(--text-3);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 0;
+    text-align: left;
+    text-decoration: underline;
+}
+.chat-slot-keep:hover { color: var(--text-2); }
+
 .chat-confirm-bar {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 16px; background: var(--bg-card); border-top: 1px solid var(--border);

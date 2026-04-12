@@ -2345,7 +2345,7 @@ def agent_respond(
     available_lists: str,
     all_tasks: str
 ) -> str by llm();
-sem agent_respond = "You are FlowBoard AI, a conversational task management assistant. Be friendly and natural — never dump a form or list of fields at the user. The 'history' is the COMPLETE conversation including the user's latest message as the last entry. Generate the NEXT assistant reply. RULES: 1) For CREATE TASK — silently extract from history: title (task name), list (any list mentioned), date/time, duration (minutes/hours). Ask for ONLY the single next missing field. When asking which list, ALWAYS show options from available_lists (e.g. 'Which list? Options: AI Project, Research, Habits'). When asking duration, give an example (e.g. 'How long? e.g. 30 or 60 minutes'). Once title + list + date + start_time + duration are all known, confirm: 'Got it! I'll add [title] to [list] on [date] at [time] for [N] min. Shall I go ahead?' 2) For DELETE/UPDATE: find the task in all_tasks and confirm. 3) Answer direct questions (lists, tasks, schedule) helpfully. 4) Resolve relative dates with current_date. 5) Be concise and warm.";
+sem agent_respond = "You are FlowBoard AI, a conversational task management assistant. Be friendly and natural — never dump a form or list of fields at the user. The 'history' is the COMPLETE conversation including the user's latest message as the last entry. Generate the NEXT assistant reply. RULES: 1) For CREATE LIST — as soon as the user gives a list name, confirm: 'Got it! I'll create a new list called \"[name]\". Shall I go ahead?' After creating a list, offer to add a task to it straight away. 2) For CREATE TASK — silently extract from history: title (task name), list (any list mentioned, including one just created), date/time, duration (minutes/hours). Ask for ONLY the single next missing field. When asking which list, ALWAYS show options from available_lists plus mention any list the user just created in this conversation. When asking duration, give an example (e.g. 'How long? e.g. 30 or 60 minutes'). Once title + list + date + start_time + duration are all known, confirm: 'Got it! I'll add \"[title]\" to [list] on [date] at [time] for [N] min. Shall I go ahead?' 3) For RESCHEDULE — match the task the user mentions to one in all_tasks, then confirm: 'I'll find better time slots for \"[task title]\" — shall I go ahead?' Do NOT ask for a specific time; the system will suggest the best options automatically. 4) For DELETE/UPDATE: find the task in all_tasks and confirm. 5) Answer direct questions (lists, tasks, schedule) helpfully. 6) Resolve relative dates with current_date. 7) Be concise and warm.";
 sem agent_respond.history = "Complete conversation as list of {role, content} dicts — the user's latest message is the last entry with role='user'. Generate the next assistant reply based on the full conversation.";
 sem agent_respond.current_date = "Today's date YYYY-MM-DD for resolving relative dates.";
 sem agent_respond.available_lists = "All available lists with IDs. Show these when asking which list.";
@@ -2362,13 +2362,14 @@ obj ChatAction {
         task_priority: str = "",
         task_due_date: str = "",
         task_list_id: str = "",
+        task_list_name: str = "",
         task_start_date: str = "",
         task_start_time: str = "",
         task_end_time: str = "",
         task_category: str = "",
         task_estimated_duration: int = 0;
 }
-sem ChatAction.action_type = "Exactly one of: create_task, update_task, delete_task, reschedule, none.";
+sem ChatAction.action_type = "Exactly one of: create_list, create_task, update_task, delete_task, reschedule, none.";
 sem ChatAction.target_task_id = "For update_task or delete_task: the exact task ID from the system. Empty string otherwise.";
 sem ChatAction.task_title = "Task title. Empty string if not applicable.";
 sem ChatAction.task_description = "Task description if specified. Empty string if not.";
@@ -2376,6 +2377,7 @@ sem ChatAction.task_status = "One of: todo, in_progress, review, done. Empty str
 sem ChatAction.task_priority = "One of: urgent, high, normal, low. Empty string if not specified.";
 sem ChatAction.task_due_date = "Deadline date YYYY-MM-DD only if explicitly stated as a deadline. Empty string otherwise.";
 sem ChatAction.task_list_id = "List ID (e.g. 'list_1'). Must match the actual system ID. Empty string if unknown.";
+sem ChatAction.task_list_name = "For create_list: the name of the new list to create. Empty string otherwise.";
 sem ChatAction.task_start_date = "Scheduled date YYYY-MM-DD resolved from conversation (e.g. 'tomorrow' → next day). Empty string if unknown.";
 sem ChatAction.task_start_time = "Start time HH:MM 24h (e.g. '2pm' → '14:00'). Empty string if unknown.";
 sem ChatAction.task_end_time = "End time HH:MM 24h computed as start_time + estimated_duration. Empty string if unknown.";
@@ -2393,6 +2395,7 @@ obj TaskReadiness {
         task_priority: str,
         task_due_date: str,
         task_list_id: str,
+        task_list_name: str,
         task_start_date: str,
         task_start_time: str,
         task_end_time: str,
@@ -2400,9 +2403,9 @@ obj TaskReadiness {
         task_estimated_duration: int;
 }
 sem TaskReadiness = "Result of extracting task action fields from the full conversation history.";
-sem TaskReadiness.ready = "True when all required fields ARE present in the conversation and have been extracted. For create_task: true when task_title != '', task_list_id != '', task_start_date != '', task_start_time != '', and task_estimated_duration > 0 — regardless of whether the assistant explicitly confirmed them. For update_task/delete_task: true when target_task_id != ''. For action_type='none': always true. Set False only when one or more required fields genuinely cannot be found anywhere in the conversation.";
+sem TaskReadiness.ready = "True when all required fields ARE present in the conversation and have been extracted. For create_list: true when task_list_name != ''. For create_task: true when task_title != '', task_list_id != '', task_start_date != '', task_start_time != '', and task_estimated_duration > 0. For update_task/delete_task: true when target_task_id != ''. For action_type='none': always true. Set False only when one or more required fields genuinely cannot be found anywhere in the conversation.";
 sem TaskReadiness.missing = "Names of fields that have NO value anywhere in the entire conversation (e.g. ['duration', 'list']). If a field WAS mentioned by the user in any prior message, do NOT include it here. Empty list when ready=True.";
-sem TaskReadiness.action_type = "Exactly one of: create_task, update_task, delete_task, reschedule, none.";
+sem TaskReadiness.action_type = "Exactly one of: create_list, create_task, update_task, delete_task, reschedule, none.";
 sem TaskReadiness.target_task_id = "For update_task or delete_task: the exact task ID from the system. Empty string otherwise.";
 sem TaskReadiness.task_title = "Task title extracted from conversation. Empty string if unknown.";
 sem TaskReadiness.task_description = "Task description if mentioned. Empty string if not.";
@@ -2410,6 +2413,7 @@ sem TaskReadiness.task_status = "One of: todo, in_progress, review, done. Empty 
 sem TaskReadiness.task_priority = "One of: urgent, high, normal, low. Empty string if not specified.";
 sem TaskReadiness.task_due_date = "Deadline date YYYY-MM-DD only if explicitly stated. Empty string otherwise.";
 sem TaskReadiness.task_list_id = "List ID (e.g. 'list_1') resolved from available_lists. Empty string if unknown.";
+sem TaskReadiness.task_list_name = "For create_list: the name the user wants to give the new list. Empty string otherwise.";
 sem TaskReadiness.task_start_date = "Scheduled date YYYY-MM-DD resolved using current_date (e.g. 'tomorrow' → next day). Empty string if unknown.";
 sem TaskReadiness.task_start_time = "Start time HH:MM 24h (e.g. '2pm' → '14:00'). Empty string if unknown.";
 sem TaskReadiness.task_end_time = "End time HH:MM 24h = start_time + task_estimated_duration minutes. Empty string if either is unknown.";
@@ -2422,7 +2426,7 @@ def check_task_readiness(
     available_lists: str,
     available_tasks: str
 ) -> TaskReadiness by llm(temperature=0.1);
-sem check_task_readiness = "Analyze the COMPLETE conversation history and extract all task action fields. RULES: (1) Scan every message for title, list, date, time, duration. (2) For create_task: ready=True when task_title, task_list_id, task_start_date, task_start_time, and task_estimated_duration > 0 are ALL extractable. (3) For delete_task or update_task: match the task the user refers to against available_tasks by title and schedule — set target_task_id to the EXACT id from available_tasks. ready=True when target_task_id is identified. (4) For general questions: action_type='none', ready=True. (5) Resolve relative dates with current_date. Convert 12h to 24h. Compute task_end_time = start_time + duration. (6) Match list names to IDs using available_lists. Only add a field to 'missing' if it genuinely cannot be found anywhere in history.";
+sem check_task_readiness = "Analyze the COMPLETE conversation history and extract all task action fields. RULES: (1) Scan every message for title, list, date, time, duration. (2) For create_list: ready=True as soon as task_list_name is known. (3) For create_task: ready=True when task_title, task_list_id, task_start_date, task_start_time, and task_estimated_duration > 0 are ALL extractable. If the user said they want to use a list they just created (referring to it by name) and that name does not yet appear in available_lists, still set task_list_id to the name — the system will resolve it after creation. (4) For reschedule: match the task the user refers to against available_tasks — set target_task_id to its EXACT id. ready=True as soon as target_task_id is identified; the system will find better slots automatically. (5) For delete_task or update_task: match the task the user refers to against available_tasks by title and schedule — set target_task_id to the EXACT id from available_tasks. ready=True when target_task_id is identified. (6) For general questions: action_type='none', ready=True. (7) Resolve relative dates with current_date. Convert 12h to 24h. Compute task_end_time = start_time + duration. (8) Match list names to IDs using available_lists. Only add a field to 'missing' if it genuinely cannot be found anywhere in history.";
 sem check_task_readiness.history = "Full conversation as list of {role, content} dicts. Scan ALL entries.";
 sem check_task_readiness.current_date = "Today's date YYYY-MM-DD for resolving relative dates.";
 sem check_task_readiness.available_lists = "List names with IDs (e.g. 'Research (id: list_2)'). Match user's list name to the correct ID.";
@@ -2621,6 +2625,7 @@ walker:priv AgentCheckReady {
             "task_priority": result.task_priority,
             "task_due_date": result.task_due_date,
             "task_list_id": result.task_list_id,
+            "task_list_name": result.task_list_name,
             "task_start_date": result.task_start_date,
             "task_start_time": result.task_start_time,
             "task_end_time": result.task_end_time,
@@ -2864,6 +2869,27 @@ walker:priv AgentExecuteCreate {
                 cd_list = here ++> CalendarDay(date=self.task_start_date);
             }
             cd_list[0] ++> task_node;
+        }
+    }
+}
+
+walker:priv AgentExecuteCreateList {
+    has list_name: str;
+
+    can create with Root entry {
+        global list_counter;
+        list_counter += 1;
+        new_id = "list_" + str(list_counter);
+        new_list = here ++> List(
+            id=new_id,
+            name=self.list_name,
+            space_id="",
+            color="gray"
+        );
+        if new_list {
+            report {"success": True, "action": "create_list", "list_id": new_list[0].id, "list_name": new_list[0].name};
+        } else {
+            report {"success": False, "error": "Could not create list"};
         }
     }
 }

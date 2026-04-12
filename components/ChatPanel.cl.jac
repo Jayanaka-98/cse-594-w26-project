@@ -1,7 +1,7 @@
 """Conversational AI chat panel for agentic task management."""
 
-sv import from main { AgentChat, AgentCheckReady, AgentExecuteCreate, AgentExecuteUpdate, AgentExecuteDelete, ListChatHistory, ClearChatHistory, AIOptimizeSchedule, ApplyReplanChanges, AIEstimateDuration }
-import from "lucide-react" { MessageSquare, Send, X, Check, XCircle, Trash2, Bot, User, Search, ChevronDown, ChevronRight }
+sv import from main { AgentChat, AgentCheckReady, AgentExecuteCreate, AgentExecuteUpdate, AgentExecuteDelete, AgentExecuteCreateList, ListChatHistory, ClearChatHistory, AIOptimizeSchedule, ApplyReplanChanges, AIEstimateDuration, AIGetAlternativeSlots, UpdateTask }
+import from "lucide-react" { MessageSquare, Send, X, Check, XCircle, Trash2, Bot, User, Search, ChevronDown, ChevronRight, Calendar, Clock }
 import from "react-markdown" { default as Markdown }
 
 def:pub ChatPanel(
@@ -12,6 +12,8 @@ def:pub ChatPanel(
         inputText: str = "",
         loading: bool = False,
         pendingAction: dict = {},
+        pendingSlots: list = [],
+        reschedulingTask: dict = {},
         historyLoaded: bool = False,
         toolLogs: dict = {},
         expandedLogs: dict = {};
@@ -131,6 +133,7 @@ def:pub ChatPanel(
                             "task_priority": readiness["task_priority"],
                             "task_due_date": readiness["task_due_date"],
                             "task_list_id": readiness["task_list_id"],
+                            "task_list_name": readiness["task_list_name"],
                             "task_start_date": readiness["task_start_date"],
                             "task_start_time": readiness["task_start_time"],
                             "task_end_time": readiness["task_end_time"],
@@ -162,7 +165,16 @@ def:pub ChatPanel(
         success = False;
 
         execResult = None;
-        if pendingAction.action_type == "create_task" {
+        if pendingAction.action_type == "create_list" {
+            listName = str(pendingAction["task_list_name"]) if pendingAction["task_list_name"] else "";
+            execResult = root spawn AgentExecuteCreateList(list_name=listName);
+            if execResult.reports and execResult.reports[0].success {
+                confirmMsg = "Done! List \"" + listName + "\" created. Want to add a task to it?";
+                success = True;
+            } else {
+                confirmMsg = "Sorry, I could not create that list. Please try again.";
+            }
+        } elif pendingAction.action_type == "create_task" {
             execResult = root spawn AgentExecuteCreate(
                 task_title=pendingAction.task_title if pendingAction.task_title else "",
                 task_description=pendingAction.task_description if pendingAction.task_description else "",
@@ -214,7 +226,29 @@ def:pub ChatPanel(
                 confirmMsg = "Sorry, I could not delete that task. Please try again.";
             }
         } elif pendingAction.action_type == "reschedule" {
-            confirmMsg = "Rescheduling is not enabled yet.";
+            taskId = str(pendingAction["target_task_id"]) if pendingAction["target_task_id"] else "";
+            if taskId == "" {
+                confirmMsg = "Sorry, I couldn't identify which task to reschedule.";
+            } else {
+                loading = True;
+                slotResult = root spawn AIGetAlternativeSlots(task_id=taskId);
+                if slotResult.reports and slotResult.reports[0] {
+                    slots = slotResult.reports[0]["slots"] if slotResult.reports[0]["slots"] else [];
+                    if len(slots) > 0 {
+                        pendingSlots = slots;
+                        reschedulingTask = {
+                            "id": taskId,
+                            "title": str(pendingAction["task_title"]) if pendingAction["task_title"] else ""
+                        };
+                        confirmMsg = "Here are the best available slots I found. Pick one below!";
+                        success = False;  # don't call onTasksChanged yet
+                    } else {
+                        confirmMsg = "Couldn't find any free slots to suggest. Try again later.";
+                    }
+                } else {
+                    confirmMsg = "Couldn't fetch alternative slots. Please try again.";
+                }
+            }
         } else {
             confirmMsg = "Sorry, I could not complete that action. Please try again.";
         }
@@ -245,6 +279,65 @@ def:pub ChatPanel(
         }]);
     }
 
+    async def applySlot(slot: any) {
+        taskId = str(reschedulingTask["id"]) if reschedulingTask["id"] else "";
+        taskTitle = str(reschedulingTask["title"]) if reschedulingTask["title"] else "";
+        if taskId == "" { return; }
+        loading = True;
+        root spawn UpdateTask(
+            task_id=taskId,
+            title=taskTitle,
+            description="",
+            status="",
+            priority="",
+            due_date="",
+            start_date=str(slot["start_date"]) if slot["start_date"] else "",
+            start_time=str(slot["start_time"]) if slot["start_time"] else "",
+            end_time=str(slot["end_time"]) if slot["end_time"] else ""
+        );
+        pendingSlots = [];
+        reschedulingTask = {};
+        loading = False;
+        messages = messages.concat([{
+            "id": "sys_" + Date.now().toString(),
+            "role": "assistant",
+            "content": "Done! \"" + taskTitle + "\" has been rescheduled.",
+            "action_type": "", "action_status": "", "timestamp": ""
+        }]);
+        onTasksChanged();
+    }
+
+    def cancelReschedule {
+        pendingSlots = [];
+        reschedulingTask = {};
+        messages = messages.concat([{
+            "id": "sys_" + Date.now().toString(),
+            "role": "assistant",
+            "content": "No problem — kept the current slot.",
+            "action_type": "", "action_status": "", "timestamp": ""
+        }]);
+    }
+
+    def formatSlotDate(d: str) -> str {
+        if not d or d == "" { return ""; }
+        # Parse YYYY-MM-DD without JS Date object
+        parts = d.split("-");
+        monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        m = int(parts[1]) - 1;
+        monthStr = monthNames[m] if m >= 0 and m < 12 else parts[1];
+        return parts[2] + " " + monthStr + " " + parts[0];
+    }
+
+    def formatSlotTime(t: str) -> str {
+        if not t or t == "" { return ""; }
+        parts = t.split(":");
+        h = int(parts[0]);
+        mins = parts[1];
+        suffix = "AM" if h < 12 else "PM";
+        displayH = h if (h > 0 and h <= 12) else (12 if h == 0 else h - 12);
+        return str(displayH) + ":" + mins + " " + suffix;
+    }
+
     async def clearHistory -> None {
         root spawn ClearChatHistory();
         messages = [];
@@ -259,6 +352,7 @@ def:pub ChatPanel(
     }
 
     def getActionLabel(actionType: str) -> str {
+        if actionType == "create_list" { return "Create List"; }
         if actionType == "create_task" { return "Create Task"; }
         if actionType == "delete_task" { return "Delete Task"; }
         if actionType == "update_task" { return "Update Task"; }
@@ -285,6 +379,7 @@ def:pub ChatPanel(
     }
 
     def getActionColor(actionType: str) -> str {
+        if actionType == "create_list" { return "chat-action-create"; }
         if actionType == "create_task" { return "chat-action-create"; }
         if actionType == "delete_task" { return "chat-action-delete"; }
         if actionType == "update_task" { return "chat-action-update"; }
@@ -396,6 +491,40 @@ def:pub ChatPanel(
                             </div>
                         )}
                     </div>
+
+                    {(
+                        <div className="chat-slot-picker">
+                            <div className="chat-slot-picker-title">
+                                <Clock size={14} />
+                                {"Better slots for \"" + str(reschedulingTask["title"]) + "\""}
+                            </div>
+                            <div className="chat-slot-picker-options">
+                                {[
+                                    <button
+                                        key={str(slot["start_date"]) + str(slot["start_time"])}
+                                        className="chat-slot-option"
+                                        onClick={lambda { applySlot(slot); }}
+                                        disabled={loading}
+                                    >
+                                        <div className="chat-slot-option-header">
+                                            <Calendar size={12} />
+                                            <span className="chat-slot-date">{formatSlotDate(str(slot["start_date"]))}</span>
+                                            <span className="chat-slot-time">{formatSlotTime(str(slot["start_time"])) + " – " + formatSlotTime(str(slot["end_time"]))}</span>
+                                        </div>
+                                        <div className="chat-slot-score">
+                                            <div className="chat-slot-score-bar" style={{"width": str(slot["productivity_score"]) + "%"}}></div>
+                                            <span>{str(slot["productivity_score"]) + "% productivity"}</span>
+                                        </div>
+                                        <div className="chat-slot-reason">{str(slot["reasoning"])}</div>
+                                    </button>
+                                    for slot in pendingSlots
+                                ]}
+                            </div>
+                            <button className="chat-slot-keep" onClick={lambda { cancelReschedule(); }}>
+                                Keep current slot
+                            </button>
+                        </div>
+                    ) if len(pendingSlots) > 0 else None}
 
                     {(
                         <div className="chat-confirm-bar">
