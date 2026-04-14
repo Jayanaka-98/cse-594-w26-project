@@ -1,6 +1,6 @@
 """Task detail panel - right side panel showing full task details."""
 
-import from "lucide-react" { X, Trash2, Play }
+import from "lucide-react" { X, Trash2, Play, Pause, Check }
 
 def:pub TaskDetailPanel(
     task: dict,
@@ -28,7 +28,12 @@ def:pub TaskDetailPanel(
     onAddComment: any,
     onDeleteComment: any,
     onAddSubtask: any,
-    onStartTask: any = None
+    activeTask: dict = {},
+    timerTick: int = 0,
+    onStartTask: any = None,
+    onPauseTask: any = None,
+    onResumeTask: any = None,
+    onFinishTask: any = None
 ) -> any {
     subtasks = allTasks.filter(
         lambda t: any -> bool { return t.parent_task_id == task.id; }
@@ -46,6 +51,20 @@ def:pub TaskDetailPanel(
         else ("status-review" if editStatus == "review"
         else "status-done"))
     );
+    hasActiveTimer = activeTask and activeTask["active_task_id"] and activeTask["active_task_id"] != "";
+    isRunning = hasActiveTimer and activeTask["is_running"];
+
+    def elapsedMinutes -> int {
+        if not hasActiveTimer { return 0; }
+        base = int(activeTask["timer_accumulated"]) if activeTask["timer_accumulated"] else 0;
+        if not isRunning { return base; }
+        started = Reflect.construct(Date, [activeTask["last_updated"]]);
+        now = Reflect.construct(Date, []);
+        extra = Math.floor((now.getTime() - started.getTime()) / 60000);
+        return base + (extra if extra > 0 else 0);
+    }
+
+    elapsedMins = elapsedMinutes();
 
     return
         <div className="detail-panel">
@@ -147,7 +166,39 @@ def:pub TaskDetailPanel(
                         >
                             <Play size={13} /> Start
                         </button>
-                    ) if onStartTask and task["status"] != "done" else None}
+                    ) if onStartTask and task["status"] != "done" and not hasActiveTimer else None}
+                    {(
+                        <button
+                            onClick={lambda -> None { onPauseTask(task.id, elapsedMins); }}
+                            className="btn-secondary btn-sm"
+                            title="Pause task timer"
+                        >
+                            <Pause size={13} /> Pause
+                        </button>
+                    ) if onPauseTask and hasActiveTimer and isRunning else None}
+                    {(
+                        <button
+                            onClick={lambda -> None { onResumeTask(task); }}
+                            className="btn-primary btn-sm"
+                            title="Resume task timer"
+                        >
+                            <Play size={13} /> Resume
+                        </button>
+                    ) if onResumeTask and hasActiveTimer and not isRunning else None}
+                    {(
+                        <button
+                            onClick={lambda -> None { onFinishTask(task.id, elapsedMins); }}
+                            className="btn-secondary btn-sm"
+                            title="Finish task"
+                        >
+                            <Check size={13} /> Finish
+                        </button>
+                    ) if onFinishTask and hasActiveTimer else None}
+                    {(
+                        <span className="task-timer-chip">
+                            {"Timer: " + str(elapsedMins) + " min"}
+                        </span>
+                    ) if hasActiveTimer else None}
                 </div>
                 <div className="detail-section">
                     <div className="detail-section-header">
@@ -272,4 +323,3 @@ def:pub CommentRow(comment: dict, onDelete: any) -> any {
             </button>
         </div>;
 }
-
