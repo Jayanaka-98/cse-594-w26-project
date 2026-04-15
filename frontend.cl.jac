@@ -19,7 +19,6 @@ import from .components.AnalyticsView { AnalyticsView }
 import from .components.ModifyScheduleView { ModifyScheduleView }
 import from .components.ChatPanel { ChatPanel }
 import from .components.ConflictResolutionModal { ConflictResolutionModal }
-import from .components.NowWorkingOn { NowWorkingOn }
 
 sv import from main {
     CreateList, ListLists, DeleteList,
@@ -28,7 +27,8 @@ sv import from main {
     GetUserProfile, UpdateUserProfile,
     SeedDemoData, ListTaskHistory,
     GetUserPatterns, UpdateUserPatterns,
-    AIOptimizeSchedule, ApplyReplanChanges
+    AIOptimizeSchedule, ApplyReplanChanges,
+    ListActiveTasks, StartTaskTimer, PauseTaskTimer, FinishTaskTimer
 }
 
 def:pub app -> any {
@@ -51,6 +51,7 @@ def:pub app -> any {
         lists: list = [],
         tasks: list = [],
         comments: list = [],
+        activeTasks: list = [],
 
         # Navigation
         selectedListId: str = "",
@@ -84,21 +85,24 @@ def:pub app -> any {
         conflictInfo: dict = {},
         showConflictResolution: bool = False,
         conflictReplan: any = None,
-
-        taskToStart: dict = {},
         leftPanelOpen: bool = True,
         overrunRatios: dict = {},
         aiPlan: any = None,
         aiPlanLoading: bool = False,
         explanationCache: dict = {},
         calendarRefreshKey: int = 0,
-        calendarEvalBump: int = 0;
+        calendarEvalBump: int = 0,
+        timerTick: int = 0,
+        timerIntervalId: any = None;
 
     can with entry {
         isLoggedIn = jacIsLoggedIn();
         checkingAuth = False;
         saved = localStorage.getItem("flowboard_view");
         if saved and saved != "" { view = saved; }
+        if not timerIntervalId {
+            timerIntervalId = setInterval(lambda -> None { timerTick = timerTick + 1; }, 1000);
+        }
     }
 
     can with [view] entry {
@@ -110,6 +114,7 @@ def:pub app -> any {
             fetchProfile();
             fetchLists();
             fetchTasks();
+            fetchActiveTasks();
         }
     }
 
@@ -117,6 +122,7 @@ def:pub app -> any {
     async def fetchLists -> None;
     async def fetchTasks -> None;
     async def fetchProfile -> None;
+    async def fetchActiveTasks -> None;
     async def saveProfile(displayName: str, theme: str, defaultView: str) -> None;
     async def toggleTheme -> None;
     def openProfile -> None;
@@ -126,6 +132,10 @@ def:pub app -> any {
     async def updateTask(taskId: str, title: str, description: str, status: str, priority: str, dueDate: str, startDate: str, startTime: str, endTime: str) -> None;
     async def updateTaskStatus(taskId: str, status: str) -> None;
     async def deleteTask(taskId: str) -> None;
+    async def startTaskTimer(task: dict) -> None;
+    async def pauseTaskTimer(taskId: str, elapsedMinutes: int) -> None;
+    async def resumeTaskTimer(task: dict) -> None;
+    async def finishTaskTimer(taskId: str, elapsedMinutes: int) -> None;
     async def deleteList(listId: str) -> None;
     async def fetchComments(taskId: str) -> None;
     async def addComment(taskId: str, content: str) -> None;
@@ -137,7 +147,14 @@ def:pub app -> any {
     async def openTask(task: dict) -> None;
     def closeTask -> None;
     def getSelectedList -> dict;
+    def getActiveTaskInfo(taskId: str) -> dict;
     async def saveTaskChanges -> None;
+
+    def getActiveTaskInfo(taskId: str) -> dict {
+        filtered = activeTasks.filter(lambda a: any -> bool { return a.active_task_id == taskId; });
+        if len(filtered) > 0 { return filtered[0]; }
+        return {};
+    }
 
     def computeConflicts(taskList: any, ratios: any) -> dict {
         defaultRatios = {"Coding": 1.42, "Research": 1.35, "Writing": 1.22, "Meeting": 1.08, "Admin": 1.05};
@@ -257,10 +274,9 @@ def:pub app -> any {
                         {(<ChevronLeft size={16} />) if leftPanelOpen else (<ChevronRight size={16} />)}
                     </button>
                     <div className="left-panel-content">
-                        <NowWorkingOn
-                            onTasksChanged={lambda -> None { fetchTasks(); calendarRefreshKey = calendarRefreshKey + 1; }}
-                            taskToStart={taskToStart}
-                        />
+                        <div className="list-empty-tasks">
+                            {str(len(activeTasks)) + " active timer" + ("" if len(activeTasks) == 1 else "s")}
+                        </div>
                     </div>
                 </div>
                 <div className="main-content">
@@ -372,9 +388,15 @@ def:pub app -> any {
                                                     <div className="nested-board-wrap">
                                                         <KanbanBoard
                                                             tasks={tasks.filter(lambda t: any -> bool { return t.list_id == lst.id and t.parent_task_id == ""; })}
+                                                            activeTasks={activeTasks}
+                                                            timerTick={timerTick}
                                                             onOpenDetail={openTask}
                                                             onStatusChange={updateTaskStatus}
                                                             onDelete={deleteTask}
+                                                            onStartTimer={startTaskTimer}
+                                                            onPauseTimer={pauseTaskTimer}
+                                                            onResumeTimer={resumeTaskTimer}
+                                                            onFinishTimer={finishTaskTimer}
                                                         />
                                                     </div>
                                                 ) if view == "board" else (
@@ -387,9 +409,15 @@ def:pub app -> any {
                                                                     <TaskCard
                                                                         key={task.id}
                                                                         task={task}
+                                                                        activeTask={getActiveTaskInfo(task.id)}
+                                                                        timerTick={timerTick}
                                                                         onOpenDetail={openTask}
                                                                         onStatusChange={updateTaskStatus}
                                                                         onDelete={deleteTask}
+                                                                        onStartTimer={startTaskTimer}
+                                                                        onPauseTimer={pauseTaskTimer}
+                                                                        onResumeTimer={resumeTaskTimer}
+                                                                        onFinishTimer={finishTaskTimer}
                                                                     /> for task in tasks if task.list_id == lst.id and task.parent_task_id == ""
                                                                 ]}
                                                             </div>
@@ -432,7 +460,12 @@ def:pub app -> any {
                         onAddComment={lambda -> None { addComment(selectedTask.id, commentText); commentText = ""; }}
                         onDeleteComment={deleteComment}
                         onAddSubtask={lambda title: str -> None { createTask(title, "", "todo", "normal", "", selectedTask.id, "", "", "", "", 0); }}
-                        onStartTask={lambda t: dict -> None { taskToStart = t; }}
+                        activeTask={getActiveTaskInfo(selectedTask.id)}
+                        timerTick={timerTick}
+                        onStartTask={startTaskTimer}
+                        onPauseTask={pauseTaskTimer}
+                        onResumeTask={resumeTaskTimer}
+                        onFinishTask={finishTaskTimer}
                     />
                 ) if showTaskDetail else None}
             </div>

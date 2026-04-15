@@ -68,16 +68,22 @@ node TaskHistory {
         category: str,
         estimated_duration: int,
         actual_duration: int,
-        completed_at: str;
+        completed_at: str,
+        started_at: str = "";
 }
 
 node UserPatterns {
     has productivity_peaks: dict = {},
         category_overrun_ratios: dict = {},
         category_productivity: dict = {},
-        active_task_id: str = "",
+        last_updated: str = "";
+}
+
+node ActiveTask {
+    has active_task_id: str = "",
         timer_start: str = "",
         timer_accumulated: int = 0,
+        is_running: bool = False,
         last_updated: str = "";
 }
 
@@ -237,7 +243,8 @@ walker:priv ListSpaces {
 }
 
 walker:priv DeleteSpace {
-    has space_id: str;
+    has space_id: str,
+        deleted_task_ids: list = [];
 
     can search with Root entry {
         visit [-->];
@@ -257,7 +264,17 @@ walker:priv DeleteSpace {
     }
 
     can delete_task with Task entry {
+        self.deleted_task_ids.append(here.id);
         del here;
+    }
+
+    can cleanup_active with Root exit {
+        for tid in self.deleted_task_ids {
+            active_nodes = [-->][?:ActiveTask, active_task_id == tid];
+            for active in active_nodes {
+                del active;
+            }
+        }
     }
 }
 
@@ -318,7 +335,8 @@ walker:priv ListLists {
 }
 
 walker:priv DeleteList {
-    has list_id: str;
+    has list_id: str,
+        deleted_task_ids: list = [];
 
     can search with Root entry {
         visit [-->];
@@ -337,7 +355,17 @@ walker:priv DeleteList {
     }
 
     can delete_task with Task entry {
+        self.deleted_task_ids.append(here.id);
         del here;
+    }
+
+    can cleanup_active with Root exit {
+        for tid in self.deleted_task_ids {
+            active_nodes = [-->][?:ActiveTask, active_task_id == tid];
+            for active in active_nodes {
+                del active;
+            }
+        }
     }
 }
 
@@ -655,6 +683,13 @@ walker:priv DeleteTask {
         if here.id == self.task_id or here.parent_task_id == self.task_id {
             del here;
             report {"deleted": self.task_id};
+        }
+    }
+
+    can cleanup_active with Root exit {
+        active_nodes = [-->][?:ActiveTask, active_task_id == self.task_id];
+        for active in active_nodes {
+            del active;
         }
     }
 }
@@ -1645,16 +1680,19 @@ walker:priv GetActiveTask {
     has active_task: dict = {};
     has timer_start: str = "";
     has timer_accumulated: int = 0;
+    has is_running: bool = False;
 
     can start with Root entry {
         visit [-->];
     }
 
-    can read_patterns with UserPatterns entry {
-        self.active_id = here.active_task_id;
-        self.timer_start = here.timer_start;
-        self.timer_accumulated = here.timer_accumulated;
-        visit [-->];
+    can read_active with ActiveTask entry {
+        if self.active_id == "" {
+            self.active_id = here.active_task_id;
+            self.timer_start = here.timer_start;
+            self.timer_accumulated = here.timer_accumulated;
+            self.is_running = here.is_running;
+        }
     }
 
     can pass_space with Space entry {
@@ -1685,34 +1723,80 @@ walker:priv GetActiveTask {
             "active": True,
             "task": self.active_task,
             "timer_start": self.timer_start,
-            "timer_accumulated": self.timer_accumulated
+            "timer_accumulated": self.timer_accumulated,
+            "is_running": self.is_running
         };
     }
 }
 
 walker:priv StartTaskTimer {
     has task_id: str;
+    has found_active: bool = False;
 
     can run with Root entry {
         visit [-->];
         report {"task_id": self.task_id, "started": True};
     }
 
-    can setup_patterns with UserPatterns entry {
-        here.active_task_id = self.task_id;
-        here.timer_start = datetime.now().isoformat();
-        here.timer_accumulated = 0;
+    can update_task with Task entry {
+        if here.id == self.task_id and here.status != "done" {
+            here.status = "in_progress";
+        }
     }
 
-    can create_patterns with Root exit {
-        existing = [n for n in [-->] if isinstance(n, UserPatterns)];
-        if not existing {
-            here ++> UserPatterns(
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
+    can setup_active with ActiveTask entry {
+        if here.active_task_id == self.task_id {
+            self.found_active = True;
+            now = datetime.now().isoformat();
+            if here.timer_start == "" {
+                here.timer_start = now;
+            }
+            here.last_updated = now;
+            here.is_running = True;
+        }
+    }
+
+    can create_active with Root exit {
+        if not self.found_active {
+            now = datetime.now().isoformat();
+            here ++> ActiveTask(
                 active_task_id=self.task_id,
-                timer_start=datetime.now().isoformat(),
-                timer_accumulated=0
+                timer_start=now,
+                timer_accumulated=0,
+                is_running=True,
+                last_updated=now
             );
         }
+    }
+}
+
+walker:priv ListActiveTasks {
+    has active_tasks: list = [];
+
+    can run with Root entry {
+        visit [-->];
+    }
+
+    can gather with ActiveTask entry {
+        self.active_tasks.append({
+            "active_task_id": here.active_task_id,
+            "timer_start": here.timer_start,
+            "timer_accumulated": here.timer_accumulated,
+            "is_running": here.is_running,
+            "last_updated": here.last_updated
+        });
+    }
+
+    can finalize with Root exit {
+        report self.active_tasks;
     }
 }
 
@@ -1725,11 +1809,11 @@ walker:priv PauseTaskTimer {
         report {"task_id": self.task_id, "paused": True, "elapsed_minutes": self.elapsed_minutes};
     }
 
-    can do_pause with UserPatterns entry {
+    can do_pause with ActiveTask entry {
         if here.active_task_id == self.task_id {
             here.timer_accumulated = self.elapsed_minutes;
-            here.active_task_id = "";
-            here.timer_start = "";
+            here.is_running = False;
+            here.last_updated = datetime.now().isoformat();
         }
     }
 }
@@ -1737,6 +1821,7 @@ walker:priv PauseTaskTimer {
 walker:priv FinishTaskTimer {
     has task_id: str,
         actual_duration: int;
+    has started_at: str = "";
 
     can run with Root entry {
         global task_history_counter;
@@ -1744,6 +1829,14 @@ walker:priv FinishTaskTimer {
         # Background analysis — update user patterns after each task finish
         root spawn AnalyzeUserPatterns();
         report {"task_id": self.task_id, "finished": True, "actual_duration": self.actual_duration};
+    }
+
+    can read_active with ActiveTask entry {
+        if here.active_task_id == self.task_id {
+            self.started_at = here.timer_start;
+            here.last_updated = datetime.now().isoformat();
+            del here;
+        }
     }
 
     can pass_space with Space entry {
@@ -1768,15 +1861,10 @@ walker:priv FinishTaskTimer {
                 category=here.category,
                 estimated_duration=here.estimated_duration,
                 actual_duration=self.actual_duration,
+                started_at=self.started_at,
                 completed_at=datetime.now().isoformat()
             );
         }
-    }
-
-    can update_patterns with UserPatterns entry {
-        here.active_task_id = "";
-        here.timer_start = "";
-        here.timer_accumulated = 0;
     }
 }
 
@@ -2036,6 +2124,7 @@ walker:priv SeedDemoData {
         here ++> TaskHistory(
             id="hist_" + str(task_history_counter), task_title="Literature review",
             category="Research", estimated_duration=90, actual_duration=130,
+            started_at="2026-03-03T10:00:00",
             completed_at="2026-03-03T11:30:00"
         );
 
@@ -2043,6 +2132,7 @@ walker:priv SeedDemoData {
         here ++> TaskHistory(
             id="hist_" + str(task_history_counter), task_title="Write introduction section",
             category="Writing", estimated_duration=60, actual_duration=75,
+            started_at="2026-03-03T12:45:00",
             completed_at="2026-03-03T14:00:00"
         );
 
@@ -2050,6 +2140,7 @@ walker:priv SeedDemoData {
         here ++> TaskHistory(
             id="hist_" + str(task_history_counter), task_title="Build prototype UI",
             category="Coding", estimated_duration=120, actual_duration=175,
+            started_at="2026-03-04T09:05:00",
             completed_at="2026-03-04T12:00:00"
         );
 
@@ -2057,6 +2148,7 @@ walker:priv SeedDemoData {
         here ++> TaskHistory(
             id="hist_" + str(task_history_counter), task_title="Weekly planning meeting",
             category="Meeting", estimated_duration=60, actual_duration=65,
+            started_at="2026-03-04T13:55:00",
             completed_at="2026-03-04T15:00:00"
         );
 
@@ -2064,6 +2156,7 @@ walker:priv SeedDemoData {
         here ++> TaskHistory(
             id="hist_" + str(task_history_counter), task_title="Fix auth bug",
             category="Coding", estimated_duration=45, actual_duration=90,
+            started_at="2026-03-05T09:30:00",
             completed_at="2026-03-05T11:00:00"
         );
 
@@ -2071,6 +2164,7 @@ walker:priv SeedDemoData {
         here ++> TaskHistory(
             id="hist_" + str(task_history_counter), task_title="Survey design & distribution",
             category="Research", estimated_duration=60, actual_duration=80,
+            started_at="2026-03-06T08:40:00",
             completed_at="2026-03-06T10:00:00"
         );
 
@@ -2404,6 +2498,7 @@ walker:priv ListTaskHistory {
             "category": here.category,
             "estimated_duration": here.estimated_duration,
             "actual_duration": here.actual_duration,
+            "started_at": here.started_at,
             "completed_at": here.completed_at
         });
     }
@@ -3216,5 +3311,3 @@ walker:priv AnalyzeScreenshot {
         };
     }
 }
-
-

@@ -14,6 +14,11 @@ impl app.fetchProfile -> None {
     }
 }
 
+impl app.fetchActiveTasks -> None {
+    result = root spawn ListActiveTasks();
+    activeTasks = result.reports[0] if result.reports else [];
+}
+
 impl app.saveProfile(displayName: str, theme: str, defaultView: str) -> None {
     result = root spawn UpdateUserProfile(
         display_name=displayName,
@@ -181,6 +186,40 @@ impl app.deleteTask(taskId: str) -> None {
     tasks = tasks.filter(
         lambda t: any -> bool { return t.id != taskId and t.parent_task_id != taskId; }
     );
+    activeTasks = activeTasks.filter(lambda a: any -> bool { return a.active_task_id != taskId; });
+    if selectedTask.id == taskId {
+        showTaskDetail = False;
+        selectedTask = {};
+        comments = [];
+    }
+}
+
+impl app.startTaskTimer(task: dict) -> None {
+    root spawn StartTaskTimer(task_id=task.id);
+    if selectedTask.id == task.id {
+        selectedTask.status = "in_progress";
+    }
+    await fetchActiveTasks();
+    await fetchTasks();
+    calendarRefreshKey = calendarRefreshKey + 1;
+}
+
+impl app.pauseTaskTimer(taskId: str, elapsedMinutes: int) -> None {
+    root spawn PauseTaskTimer(task_id=taskId, elapsed_minutes=elapsedMinutes);
+    await fetchActiveTasks();
+}
+
+impl app.resumeTaskTimer(task: dict) -> None {
+    root spawn StartTaskTimer(task_id=task.id);
+    await fetchActiveTasks();
+    await fetchTasks();
+}
+
+impl app.finishTaskTimer(taskId: str, elapsedMinutes: int) -> None {
+    root spawn FinishTaskTimer(task_id=taskId, actual_duration=elapsedMinutes);
+    await fetchActiveTasks();
+    await fetchTasks();
+    calendarRefreshKey = calendarRefreshKey + 1;
     if selectedTask.id == taskId {
         showTaskDetail = False;
         selectedTask = {};
@@ -239,6 +278,7 @@ impl app.handleLogin -> None {
         await fetchProfile();
         await fetchLists();
         await fetchTasks();
+        await fetchActiveTasks();
     } else {
         authError = "Invalid username or password";
     }
@@ -265,6 +305,7 @@ impl app.handleSignup -> None {
         await fetchProfile();
         await fetchLists();
         await fetchTasks();
+        await fetchActiveTasks();
     } else {
         authError = result["error"] if result["error"] else "Signup failed";
     }
@@ -276,6 +317,7 @@ impl app.handleLogout -> None {
     lists = [];
     tasks = [];
     comments = [];
+    activeTasks = [];
     selectedListId = "";
     selectedTask = {};
     showTaskDetail = False;
