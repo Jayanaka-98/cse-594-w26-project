@@ -3,7 +3,7 @@
 Combines server-side endpoints with client-side UI.
 """
 
-import from byllm.lib { Model }
+import from byllm.lib { Model, Image }
 import from datetime { datetime, timedelta }
 import from json { dumps as json_dumps, loads as json_loads }
 
@@ -74,6 +74,7 @@ node TaskHistory {
 node UserPatterns {
     has productivity_peaks: dict = {},
         category_overrun_ratios: dict = {},
+        category_productivity: dict = {},
         active_task_id: str = "",
         timer_start: str = "",
         timer_accumulated: int = 0,
@@ -111,6 +112,17 @@ node CalendarDay {
     has date: str;  # YYYY-MM-DD — one node per date that has scheduled tasks
 }
 
+node ActivityReport {
+    has id: str,
+        task_id: str,
+        task_title: str,
+        task_category: str,
+        on_task: bool,
+        elapsed_minutes: int,
+        reported_at: str,
+        off_task_description: str = "";
+}
+
 # ===== GLOBAL COUNTERS =====
 
 glob space_counter: int = 0;
@@ -119,6 +131,7 @@ glob task_counter: int = 0;
 glob comment_counter: int = 0;
 glob task_history_counter: int = 0;
 glob chat_msg_counter: int = 0;
+glob activity_report_counter: int = 0;
 
 # ===== USER PROFILE WALKERS =====
 
@@ -745,6 +758,21 @@ walker:priv AIExtractTaskFromTranscript {
         };
     }
 }
+
+# ===== ACTIVITY TRACKING =====
+
+obj ActivityAnalysis {
+    has on_task: bool,
+        description: str;
+}
+sem ActivityAnalysis.on_task = "True if the user appears to be actively working on the specified task, False if they are visibly doing something unrelated";
+sem ActivityAnalysis.description = "One sentence describing what is visible on screen and how it relates (or does not relate) to the task";
+
+def check_user_activity(img: Image, task_title: str, task_category: str) -> ActivityAnalysis by llm(temperature=0.1);
+sem check_user_activity = "You are a focus coach. Examine the screenshot and decide if the user is working on their task. The task title is in task_title and its category is in task_category. Common on-task evidence: code editor, relevant browser tab, document editor matching the category. Off-task evidence: social media, games, unrelated video, messaging apps unrelated to work. Return on_task=True only if there is clear evidence of working on the task.";
+sem check_user_activity.img = "Screenshot of the user's screen";
+sem check_user_activity.task_title = "Title of the task the user is supposed to be working on";
+sem check_user_activity.task_category = "Category of the task (e.g. coding, writing, research, design)";
 
 # ===== AI SCHEDULING — RETURN TYPES =====
 
@@ -1754,6 +1782,7 @@ walker:priv FinishTaskTimer {
 
 walker:priv AnalyzeUserPatterns {
     has history: list = [];
+    has activity_reports: list = [];
     has patterns_node: any = None;
 
     can start with Root entry {
@@ -1770,14 +1799,22 @@ walker:priv AnalyzeUserPatterns {
         }
     }
 
+    can collect_reports with ActivityReport entry {
+        cat = here.task_category if here.task_category else "Other";
+        self.activity_reports.append({
+            "category": cat,
+            "on_task": here.on_task
+        });
+    }
+
     can find_patterns with UserPatterns entry {
         self.patterns_node = here;
     }
 
     can finalize with Root exit {
-        if len(self.history) == 0 { return; }
+        if len(self.history) == 0 and len(self.activity_reports) == 0 { return; }
 
-        # Compute mean actual/estimated ratio per category
+        # --- Overrun ratios from task history ---
         cat_sums: dict = {};
         cat_counts: dict = {};
         for h in self.history {
@@ -1794,17 +1831,58 @@ walker:priv AnalyzeUserPatterns {
             new_ratios[cat] = round(cat_sums[cat] / cat_counts[cat], 2);
         }
 
-        # Persist — update existing node or create one
+        # --- Productivity scores from activity reports ---
+        # on_task_counts[cat] = total checks, on_task_hits[cat] = on-task checks
+        on_task_total: dict = {};
+        on_task_hits: dict = {};
+        for r in self.activity_reports {
+            cat = r["category"];
+            if cat not in on_task_total {
+                on_task_total[cat] = 0;
+                on_task_hits[cat] = 0;
+            }
+            on_task_total[cat] = on_task_total[cat] + 1;
+            if r["on_task"] {
+                on_task_hits[cat] = on_task_hits[cat] + 1;
+            }
+        }
+        new_productivity: dict = {};
+        for cat in on_task_total {
+            total = on_task_total[cat];
+            hits = on_task_hits[cat];
+            new_productivity[cat] = round(hits / total, 2) if total > 0 else 1.0;
+        }
+
+        # --- Adjust overrun ratios by productivity ---
+        # If a category has low productivity, effective work pace is slower,
+        # so inflate the overrun ratio to compensate: adjusted = raw / productivity
+        for cat in new_ratios {
+            if cat in new_productivity and new_productivity[cat] > 0.0 {
+                adjusted = round(new_ratios[cat] / new_productivity[cat], 2);
+                new_ratios[cat] = adjusted;
+            }
+        }
+
+        # --- Persist ---
         if self.patterns_node {
-            self.patterns_node.category_overrun_ratios = new_ratios;
-            self.patterns_node.last_updated = datetime.now().isoformat();
+            if len(new_ratios) > 0 {
+                self.patterns_node.category_overrun_ratios = new_ratios;
+            }
+            if len(new_productivity) > 0 {
+                self.patterns_node.category_productivity = new_productivity;
+            }
+            self.patterns_node.last_updated = str(datetime.now());
         } else {
             root ++> UserPatterns(
                 category_overrun_ratios=new_ratios,
-                last_updated=datetime.now().isoformat()
+                category_productivity=new_productivity
             );
         }
-        report {"updated": True, "ratios": new_ratios};
+        report {
+            "updated": True,
+            "ratios": new_ratios,
+            "productivity": new_productivity
+        };
     }
 }
 
@@ -3043,6 +3121,99 @@ walker:priv ClearChatHistory {
 
     can done with Root exit {
         report {"cleared": True};
+    }
+}
+
+# ===== ACTIVITY TRACKING WALKER =====
+
+walker:priv AnalyzeScreenshot {
+    has screenshot_b64: str,
+        task_id: str,
+        task_title: str,
+        task_category: str,
+        elapsed_minutes: int,
+        estimated_minutes: int;
+    has found_session: list = [];
+
+    can start with Root entry {
+        visit [-->];
+    }
+
+    can capture_session with ChatSession entry {
+        self.found_session = [here];
+    }
+
+    can finalize with Root exit {
+        global activity_report_counter, chat_msg_counter;
+
+        # Vision analysis
+        img = Image("data:image/png;base64," + self.screenshot_b64);
+        result = check_user_activity(img, self.task_title, self.task_category);
+
+        # Store activity report on graph
+        activity_report_counter += 1;
+        here ++> ActivityReport(
+            id="ar_" + str(activity_report_counter),
+            task_id=self.task_id,
+            task_title=self.task_title,
+            task_category=self.task_category,
+            on_task=result.on_task,
+            elapsed_minutes=self.elapsed_minutes,
+            reported_at=str(datetime.now()),
+            off_task_description=(result.description if not result.on_task else "")
+        );
+
+        needs_alert = (not result.on_task) or (self.estimated_minutes > 0 and self.elapsed_minutes > self.estimated_minutes);
+
+        alert_sent = False;
+        if needs_alert {
+            if len(self.found_session) > 0 {
+                session = self.found_session[0];
+            } else {
+                sess_nodes = here ++> ChatSession(id="chat_session");
+                session = sess_nodes[0];
+            }
+
+            chat_msg_counter += 1;
+            if not result.on_task {
+                alert_text = (
+                    "Hey! It looks like you might be off task. "
+                    + "You're supposed to be working on \""
+                    + self.task_title
+                    + "\". "
+                    + result.description
+                    + " Want to refocus?"
+                );
+            } else {
+                over = self.elapsed_minutes - self.estimated_minutes;
+                alert_text = (
+                    "Heads up! You've been on \""
+                    + self.task_title
+                    + "\" for "
+                    + str(self.elapsed_minutes)
+                    + " min (estimated "
+                    + str(self.estimated_minutes)
+                    + " min — you're "
+                    + str(over)
+                    + " min over). Want to wrap up or update the estimate?"
+                );
+            }
+
+            session ++> ChatMessage(
+                id="chat_" + str(chat_msg_counter),
+                role="assistant",
+                content=alert_text,
+                action_type="activity_alert",
+                timestamp=datetime.now().isoformat()
+            );
+            alert_sent = True;
+        }
+
+        report {
+            "on_task": result.on_task,
+            "description": result.description,
+            "alert_sent": alert_sent
+        };
     }
 }
 

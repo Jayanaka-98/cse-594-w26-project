@@ -1,0 +1,7 @@
+# Runtime dependencies
+rumps>=0.4.0
+requests>=2.31.0
+
+# Packaging (only needed to build the .app / .dmg)
+# py2app>=0.28
+# create-dmg is a separate brew tool: brew install create-dmg

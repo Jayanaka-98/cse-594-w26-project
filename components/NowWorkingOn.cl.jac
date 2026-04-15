@@ -55,7 +55,16 @@ def:pub NowWorkingOn(
                 activeEt     = str(t["end_time"]) if t["end_time"] else "";
                 activeDesc   = str(t["description"]) if t["description"] else "";
                 accumulated: int = int(d["timer_accumulated"]) if d["timer_accumulated"] else 0;
-                elapsedSeconds = accumulated * 60;
+                timerStart: str = str(d["timer_start"]) if d["timer_start"] else "";
+                sinceStart: int = 0;
+                if timerStart != "" {
+                    nowMs: int = int(Reflect.construct(Date, []).getTime());
+                    startedMs: int = int(Reflect.construct(Date, [timerStart]).getTime());
+                    diff: int = nowMs - startedMs;
+                    sinceStart = diff // 1000;
+                    if sinceStart < 0 { sinceStart = 0; }
+                }
+                elapsedSeconds = accumulated * 60 + sinceStart;
                 isRunning = True;
                 startTick();
             }
