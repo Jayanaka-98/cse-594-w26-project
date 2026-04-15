@@ -76,6 +76,7 @@ node UserPatterns {
     has productivity_peaks: dict = {},
         category_overrun_ratios: dict = {},
         category_productivity: dict = {},
+        out_of_scope_minutes: int = 0,
         last_updated: str = "";
 }
 
@@ -793,6 +794,25 @@ walker:priv AIExtractTaskFromTranscript {
         };
     }
 }
+
+# ===== TASK-SCREEN MATCHING =====
+
+obj TaskMatch {
+    has task_id: str,
+        task_title: str,
+        confidence: int,
+        reasoning: str;
+}
+sem TaskMatch.task_id = "ID of the task the user is working on, or empty string if nothing matches";
+sem TaskMatch.task_title = "Title of the matched task, or empty string if no match";
+sem TaskMatch.confidence = "Confidence score 0-100 that the user is actively working on this specific task";
+sem TaskMatch.reasoning = "One sentence explaining what on screen matched this task";
+
+def match_task_to_screen(img: Image, tasks_summary: str, current_time: str) -> TaskMatch by llm(temperature=0.1);
+sem match_task_to_screen = "You are a task-detection system. Look at the screenshot and the list of tasks scheduled for today. Find which task (if any) the user is actively working on based on what is visible on screen. Match app context to task category: Coding tasks need a code editor or terminal; Writing tasks need a document editor; Meeting tasks need a video call app; Research tasks need relevant browser tabs. Only return a match when confidence >= 70. If nothing clearly matches, return empty task_id and confidence 0.";
+sem match_task_to_screen.img = "Screenshot of the user's screen";
+sem match_task_to_screen.tasks_summary = "Newline-separated list of today's tasks in format: [task_id] title (category) scheduled HH:MM";
+sem match_task_to_screen.current_time = "Current time in HH:MM 24-hour format";
 
 # ===== ACTIVITY TRACKING =====
 
@@ -1868,6 +1888,27 @@ walker:priv FinishTaskTimer {
     }
 }
 
+walker:priv RecordOutOfScopeTime {
+    has minutes: int;
+    has found: bool = False;
+
+    can run with Root entry {
+        visit [-->];
+    }
+
+    can record with UserPatterns entry {
+        self.found = True;
+        here.out_of_scope_minutes = here.out_of_scope_minutes + self.minutes;
+        here.last_updated = str(datetime.now());
+    }
+
+    can create_if_missing with Root exit {
+        if not self.found {
+            here ++> UserPatterns(out_of_scope_minutes=self.minutes);
+        }
+    }
+}
+
 walker:priv AnalyzeUserPatterns {
     has history: list = [];
     has activity_reports: list = [];
@@ -2197,13 +2238,20 @@ walker:priv GetUserPatterns {
         self.found = True;
         report {
             "productivity_peaks": here.productivity_peaks,
-            "category_overrun_ratios": here.category_overrun_ratios
+            "category_overrun_ratios": here.category_overrun_ratios,
+            "category_productivity": here.category_productivity,
+            "out_of_scope_minutes": here.out_of_scope_minutes
         };
     }
 
     can fallback with Root exit {
         if not self.found {
-            report {"productivity_peaks": {}, "category_overrun_ratios": {}};
+            report {
+                "productivity_peaks": {},
+                "category_overrun_ratios": {},
+                "category_productivity": {},
+                "out_of_scope_minutes": 0
+            };
         }
     }
 }
@@ -3216,6 +3264,96 @@ walker:priv ClearChatHistory {
 
     can done with Root exit {
         report {"cleared": True};
+    }
+}
+
+# ===== TASK-SCREEN MATCHING WALKER =====
+
+walker:priv MatchTaskFromScreenshot {
+    has screenshot_b64: str,
+        today_date: str,
+        current_time: str;
+    has candidate_tasks: list = [];
+    has scheduled_now_ids: list = [];
+
+    can start with Root entry {
+        visit [-->];
+    }
+
+    can pass_space with Space entry {
+        visit [-->];
+    }
+
+    can pass_list with List entry {
+        visit [-->];
+    }
+
+    can collect_task with Task entry {
+        if here.status != "done" and here.start_date == self.today_date {
+            st: str = here.start_time if here.start_time else "";
+            et: str = here.end_time if here.end_time else "";
+            # Check if current_time falls within the scheduled window
+            in_window: bool = False;
+            if st != "" and et != "" {
+                in_window = st <= self.current_time and self.current_time <= et;
+            }
+            self.candidate_tasks.append({
+                "id": here.id,
+                "title": here.title,
+                "category": here.category,
+                "start_time": st,
+                "end_time": et,
+                "in_window": in_window
+            });
+            if in_window {
+                self.scheduled_now_ids.append(here.id);
+            }
+        }
+    }
+
+    can finalize with Root exit {
+        scheduled_now = len(self.scheduled_now_ids) > 0;
+
+        if len(self.candidate_tasks) == 0 {
+            report {
+                "matched": False,
+                "scheduled_now": False,
+                "task_id": "", "task_title": "", "confidence": 0,
+                "reasoning": "No tasks scheduled for today"
+            };
+            return;
+        }
+
+        task_lines = [];
+        for t in self.candidate_tasks {
+            line = "[" + str(t["id"]) + "] " + str(t["title"]);
+            if t["category"] and t["category"] != "" {
+                line = line + " (" + str(t["category"]) + ")";
+            }
+            if t["start_time"] != "" {
+                line = line + " @ " + str(t["start_time"]);
+                if t["end_time"] != "" {
+                    line = line + "-" + str(t["end_time"]);
+                }
+            }
+            if t["in_window"] {
+                line = line + " [SCHEDULED NOW]";
+            }
+            task_lines.append(line);
+        }
+        tasks_summary = "\n".join(task_lines);
+
+        img = Image("data:image/png;base64," + self.screenshot_b64);
+        match_result = match_task_to_screen(img, tasks_summary, self.current_time);
+
+        report {
+            "matched": match_result.confidence >= 70 and match_result.task_id != "",
+            "scheduled_now": scheduled_now,
+            "task_id": match_result.task_id,
+            "task_title": match_result.task_title,
+            "confidence": match_result.confidence,
+            "reasoning": match_result.reasoning
+        };
     }
 }
 

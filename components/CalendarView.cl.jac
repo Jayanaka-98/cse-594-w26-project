@@ -36,10 +36,13 @@ def:pub CalendarView(
         ghostResizeStartY: int = 0,
         ghostResizeOriginalEnd: str = "",
         ghostResizeOriginalStart: str = "",
-        ghostResizeCurrentEndTime: str = "";
+        ghostResizeCurrentEndTime: str = "",
+        nowMinutes: int = 0;
 
     can with entry {
         fetchTasks();
+        nowMinutes = getNowMinutes();
+        setInterval(lambda -> None { nowMinutes = getNowMinutes(); }, 60000);
     }
 
     can with [weekOffset] entry {
@@ -113,6 +116,11 @@ def:pub CalendarView(
     def scrollToNow -> None {
         el = document.querySelector(".cal-grid-scroll");
         if el { el.scrollTop = 480; }
+    }
+
+    def getNowMinutes -> int {
+        d = Reflect.construct(Date, []);
+        return d.getHours() * 60 + d.getMinutes();
     }
 
     def computeWeekDates -> None {
@@ -285,17 +293,24 @@ def:pub CalendarView(
 
     async def handleResizeEnd(e: any) -> None {
         if resizingTaskId != "" {
-            matches = internalTasks.filter(lambda t: any -> bool { return t.id == resizingTaskId; });
-            if len(matches) > 0 and resizeCurrentEndTime != "" {
-                task = matches[0];
-                await onUpdateTask(task.id, task.title, task.description, task.status, task.priority, task.due_date, task.start_date, task.start_time, resizeCurrentEndTime);
-                await fetchTasks();
-            }
-            # Clear after backend sync — height stays correct during network round-trip
+            # Capture what we need, then clear resize state IMMEDIATELY so the
+            # overlay disappears before fetchTasks captures scrollTop.
+            # This prevents the overlay removal from resetting the scroll position.
+            savedId = resizingTaskId;
+            savedEnd = resizeCurrentEndTime;
             resizingTaskId = "";
             resizeStartY = 0;
             resizeOriginalEnd = "";
+            resizeOriginalStart = "";
             resizeCurrentEndTime = "";
+            if savedEnd != "" {
+                matches = internalTasks.filter(lambda t: any -> bool { return t.id == savedId; });
+                if len(matches) > 0 {
+                    task = matches[0];
+                    await onUpdateTask(task.id, task.title, task.description, task.status, task.priority, task.due_date, task.start_date, task.start_time, savedEnd);
+                    await fetchTasks();
+                }
+            }
         } elif resizingGhostTaskId != "" {
             if ghostResizeCurrentEndTime != "" {
                 gId = resizingGhostTaskId;
@@ -717,6 +732,15 @@ def:pub CalendarView(
                                     ></div>
                                     for h in hours
                                 ]}
+
+                                {(
+                                    <div
+                                        className="cal-now-line"
+                                        style={{top: nowMinutes.toString() + "px"}}
+                                    >
+                                        <div className="cal-now-dot"></div>
+                                    </div>
+                                ) if isToday(dateStr) else None}
 
                                 {[
                                     <div

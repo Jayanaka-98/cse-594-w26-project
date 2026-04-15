@@ -1,9 +1,24 @@
 """FlowBoard Activity Tracker — macOS menu bar widget.
 
 Runs in the background, polls FlowBoard every POLL_INTERVAL seconds,
-takes a screenshot when a task is active, and asks the server to analyse
-whether you're on-task.  Alerts appear as macOS notifications and in the
-FlowBoard chat panel.
+takes a screenshot on every tick, and uses vision LLM to decide which
+(if any) scheduled task the user is currently working on.
+
+State machine
+─────────────
+  IDLE           No active task, no scheduled tasks in window (or nothing matched)
+  TRACKING       Timer running for a specific task
+  OUT_OF_SCOPE   Tasks are scheduled right now but the user is doing something
+                 unrelated; elapsed time is accumulated and reported to the server
+
+Transitions
+───────────
+  Any  + match(task)            → TRACKING(task)  [start/switch timer]
+  TRACKING(t) + no_match + scheduled_now  → OUT_OF_SCOPE  [pause timer]
+  TRACKING(t) + no_match + not scheduled  → IDLE  [pause timer]
+  OUT_OF_SCOPE + no_match + not scheduled → IDLE  [record out-of-scope time]
+  OUT_OF_SCOPE + no_match + scheduled_now → stay OUT_OF_SCOPE
+  IDLE + anything                         → stay IDLE  (until a match appears)
 
 Requirements: pip install rumps requests
 Run:          python widget.py
@@ -27,6 +42,11 @@ import rumps
 FLOWBOARD_URL = os.environ.get("FLOWBOARD_URL", "http://localhost:8000").rstrip("/")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "120"))
 TOKEN_FILE = os.path.expanduser("~/.flowboard_token")
+
+# States
+STATE_IDLE = "IDLE"
+STATE_TRACKING = "TRACKING"
+STATE_OUT_OF_SCOPE = "OUT_OF_SCOPE"
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +188,13 @@ class FlowBoardWidget(rumps.App):
         )
 
         self.token: str | None = _load_token()
+
+        # --- State machine ---
+        self._state: str = STATE_IDLE
+        self._active_task_id: str = ""
+        self._active_task: dict | None = None
+        self._out_of_scope_start: datetime | None = None
         self._paused = False
-        self._current_task: dict | None = None
 
         # Build menu
         self._status_item = rumps.MenuItem("Status: Idle")
@@ -212,15 +237,33 @@ class FlowBoardWidget(rumps.App):
     def _toggle_pause(self, sender):
         self._paused = not self._paused
         sender.title = "Resume Tracking" if self._paused else "Pause Tracking"
-        self._set_status("Paused" if self._paused else "Idle")
+        if self._paused:
+            self._set_status("Paused")
+            # If we were tracking, pause the server timer
+            if self._state == STATE_TRACKING and self._active_task_id:
+                threading.Thread(
+                    target=self._server_pause_timer,
+                    args=(self._active_task_id,),
+                    daemon=True,
+                ).start()
+            # If out-of-scope, record accumulated time
+            elif self._state == STATE_OUT_OF_SCOPE:
+                self._flush_out_of_scope()
+            self._state = STATE_IDLE
+            self._active_task_id = ""
+            self._active_task = None
+        else:
+            self._set_status("Idle — watching")
 
     def _show_login(self, _):
-        # Menu callbacks run on the main thread — call directly
         _login_dialog(self)
 
     def _logout(self, _):
         self.token = None
         _delete_token()
+        self._state = STATE_IDLE
+        self._active_task_id = ""
+        self._active_task = None
         self._set_status("Not signed in")
         self._task_item.title = "No active task"
 
@@ -235,26 +278,120 @@ class FlowBoardWidget(rumps.App):
         return {"Authorization": f"Bearer {self.token}"}
 
     # ------------------------------------------------------------------
-    # Polling
+    # Server timer calls (run on background threads)
     # ------------------------------------------------------------------
 
-    def _poll(self, _timer=None) -> None:
-        """Called by the timer (and manually on startup/login)."""
-        if not self.token or self._paused:
+    def _server_start_timer(self, task_id: str) -> bool:
+        try:
+            resp = requests.post(
+                f"{FLOWBOARD_URL}/walker/StartTaskTimer",
+                headers=self._auth_headers(),
+                json={"task_id": task_id},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return True
+        except Exception as exc:
+            print(f"[FlowBoard] StartTaskTimer failed: {exc}")
+            return False
+
+    def _server_pause_timer(self, task_id: str, elapsed_minutes: int = 0) -> bool:
+        try:
+            resp = requests.post(
+                f"{FLOWBOARD_URL}/walker/PauseTaskTimer",
+                headers=self._auth_headers(),
+                json={"task_id": task_id, "elapsed_minutes": elapsed_minutes},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return True
+        except Exception as exc:
+            print(f"[FlowBoard] PauseTaskTimer failed: {exc}")
+            return False
+
+    def _server_record_out_of_scope(self, minutes: int) -> None:
+        if minutes <= 0:
             return
         try:
             resp = requests.post(
-                f"{FLOWBOARD_URL}/walker/GetActiveTask",
+                f"{FLOWBOARD_URL}/walker/RecordOutOfScopeTime",
                 headers=self._auth_headers(),
-                json={},
+                json={"minutes": minutes},
                 timeout=10,
             )
+            resp.raise_for_status()
+            print(f"[FlowBoard] Recorded {minutes} min out-of-scope")
         except Exception as exc:
-            print(f"[FlowBoard] Poll request failed: {exc}")
+            print(f"[FlowBoard] RecordOutOfScopeTime failed: {exc}")
+
+    def _flush_out_of_scope(self) -> None:
+        """Record accumulated out-of-scope time to the server and reset."""
+        if self._out_of_scope_start is not None:
+            minutes = int((datetime.now() - self._out_of_scope_start).total_seconds() / 60)
+            self._out_of_scope_start = None
+            if minutes > 0:
+                threading.Thread(
+                    target=self._server_record_out_of_scope,
+                    args=(minutes,),
+                    daemon=True,
+                ).start()
+
+    # ------------------------------------------------------------------
+    # Screenshot helper
+    # ------------------------------------------------------------------
+
+    def _take_screenshot_b64(self) -> str | None:
+        """Capture the screen and return base64-encoded PNG, or None on failure."""
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
+                tmp_path = tf.name
+            subprocess.run(
+                ["screencapture", "-x", "-t", "png", tmp_path],
+                check=True, timeout=10,
+            )
+            with open(tmp_path, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+        except Exception as exc:
+            print(f"[FlowBoard] Screenshot failed: {exc}")
+            return None
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    # ------------------------------------------------------------------
+    # Polling — unified state machine
+    # ------------------------------------------------------------------
+
+    def _poll(self, _timer=None) -> None:
+        """Main poll: screenshot → match → apply state machine transitions."""
+        if not self.token or self._paused:
+            return
+
+        screenshot_b64 = self._take_screenshot_b64()
+        if not screenshot_b64:
+            return
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        now_time = datetime.now().strftime("%H:%M")
+
+        # --- Call MatchTaskFromScreenshot ---
+        try:
+            resp = requests.post(
+                f"{FLOWBOARD_URL}/walker/MatchTaskFromScreenshot",
+                headers=self._auth_headers(),
+                json={
+                    "screenshot_b64": screenshot_b64,
+                    "today_date": today,
+                    "current_time": now_time,
+                },
+                timeout=30,
+            )
+        except Exception as exc:
+            print(f"[FlowBoard] MatchTaskFromScreenshot request failed: {exc}")
             return
 
         if resp.status_code == 401:
-            # Token expired or invalid
             self.token = None
             _delete_token()
             self._set_status("Session expired — please sign in")
@@ -265,59 +402,183 @@ class FlowBoardWidget(rumps.App):
         except Exception:
             return
 
-        # Response shape: {"ok": true, "data": {"reports": [...]}}
         reports = (data.get("data") or {}).get("reports", [])
         result = reports[0] if reports else {}
 
-        if not result.get("active"):
-            self._current_task = None
-            self._set_status("Idle")
-            self._task_item.title = "No active task"
-            return
+        matched: bool = result.get("matched", False)
+        scheduled_now: bool = result.get("scheduled_now", False)
+        task_id: str = result.get("task_id", "")
+        task_title: str = result.get("task_title", "")
+        confidence: int = result.get("confidence", 0)
+        reasoning: str = result.get("reasoning", "")
 
-        task = result["task"]
-        self._current_task = task
-        elapsed = _elapsed_minutes(
-            result.get("timer_start", ""),
-            result.get("timer_accumulated", 0),
+        print(
+            f"[FlowBoard] state={self._state} matched={matched} "
+            f"scheduled_now={scheduled_now} task_id={task_id} "
+            f"confidence={confidence}% reason={reasoning!r}"
         )
 
-        self._set_status(f"Tracking ({elapsed} min elapsed)")
-        title_display = task["title"][:40] + "…" if len(task["title"]) > 40 else task["title"]
-        self._task_item.title = f"Task: {title_display}"
+        self._apply_transition(
+            matched, scheduled_now, task_id, task_title, confidence, reasoning,
+            screenshot_b64,
+        )
 
-        # Run screenshot + analysis on a background thread
-        threading.Thread(
-            target=self._analyze, args=(task, elapsed), daemon=True
-        ).start()
+    def _apply_transition(
+        self,
+        matched: bool,
+        scheduled_now: bool,
+        task_id: str,
+        task_title: str,
+        confidence: int,
+        reasoning: str,
+        screenshot_b64: str,
+    ) -> None:
+        prev_task_id = self._active_task_id
 
-    # ------------------------------------------------------------------
-    # Screenshot + analysis
-    # ------------------------------------------------------------------
+        if matched and task_id:
+            # --- Transition to TRACKING ---
+            if self._state == STATE_OUT_OF_SCOPE:
+                # Record out-of-scope time before starting task
+                self._flush_out_of_scope()
 
-    def _analyze(self, task: dict, elapsed_minutes: int) -> None:
-        """Take a screenshot and send it to AnalyzeScreenshot walker."""
-        tmp_path = None
+            if self._state == STATE_TRACKING and prev_task_id != task_id:
+                # Switch: pause old task, start new one
+                elapsed = self._get_active_elapsed()
+                threading.Thread(
+                    target=self._server_pause_timer,
+                    args=(prev_task_id, elapsed),
+                    daemon=True,
+                ).start()
+                _notify(
+                    "FlowBoard",
+                    f"Switched task",
+                    f"Stopped '{self._active_task.get('title', prev_task_id) if self._active_task else prev_task_id}', "
+                    f"starting '{task_title}'",
+                )
+
+            if self._state != STATE_TRACKING or prev_task_id != task_id:
+                # Start the new task timer
+                ok = self._server_start_timer(task_id)
+                if not ok:
+                    return
+                self._state = STATE_TRACKING
+                self._active_task_id = task_id
+                self._active_task = {"id": task_id, "title": task_title}
+                title_display = task_title[:40] + "…" if len(task_title) > 40 else task_title
+                self._set_status(f"▶ {title_display}")
+                self._task_item.title = f"Task: {title_display}"
+                _notify(
+                    "FlowBoard",
+                    f"Timer started: {task_title}",
+                    f"{reasoning} (confidence {confidence}%)",
+                )
+                print(f"[FlowBoard] Started timer for task_id={task_id} ({confidence}%)")
+            else:
+                # Already tracking the same task — run on-task analysis
+                threading.Thread(
+                    target=self._analyze_active_task,
+                    args=(task_id, task_title, screenshot_b64),
+                    daemon=True,
+                ).start()
+
+        else:
+            # --- No match ---
+            if self._state == STATE_TRACKING:
+                # Pause the running task
+                elapsed = self._get_active_elapsed()
+                prev_title = self._active_task.get("title", prev_task_id) if self._active_task else prev_task_id
+                threading.Thread(
+                    target=self._server_pause_timer,
+                    args=(prev_task_id, elapsed),
+                    daemon=True,
+                ).start()
+                self._active_task_id = ""
+                self._active_task = None
+
+                if scheduled_now:
+                    # Tasks are scheduled but user isn't doing any of them
+                    self._state = STATE_OUT_OF_SCOPE
+                    self._out_of_scope_start = datetime.now()
+                    self._set_status("Out of scope — tasks scheduled")
+                    self._task_item.title = "Out of scope"
+                    _notify(
+                        "FlowBoard",
+                        "Timer paused",
+                        f"Paused '{prev_title}' — you seem to be doing something else.",
+                    )
+                    print(f"[FlowBoard] Entered OUT_OF_SCOPE (tasks scheduled, no match)")
+                else:
+                    # Nothing scheduled — just idle
+                    self._state = STATE_IDLE
+                    self._set_status("Idle — no scheduled tasks")
+                    self._task_item.title = "No active task"
+                    _notify(
+                        "FlowBoard",
+                        "Timer paused",
+                        f"No matching task detected. Timer paused for '{prev_title}'.",
+                    )
+                    print(f"[FlowBoard] Entered IDLE (no scheduled tasks, no match)")
+
+            elif self._state == STATE_OUT_OF_SCOPE:
+                if not scheduled_now:
+                    # Scheduled window ended — record out-of-scope time and go idle
+                    self._flush_out_of_scope()
+                    self._state = STATE_IDLE
+                    self._set_status("Idle — schedule window ended")
+                    self._task_item.title = "No active task"
+                    print(f"[FlowBoard] OUT_OF_SCOPE → IDLE (schedule window ended)")
+                else:
+                    # Still in a scheduled window, still not doing any task
+                    elapsed_oos = 0
+                    if self._out_of_scope_start:
+                        elapsed_oos = int(
+                            (datetime.now() - self._out_of_scope_start).total_seconds() / 60
+                        )
+                    self._set_status(f"Out of scope ({elapsed_oos} min)")
+                    print(f"[FlowBoard] Still OUT_OF_SCOPE ({elapsed_oos} min accumulated)")
+
+            else:
+                # IDLE — nothing to do
+                self._set_status("Idle — watching for tasks")
+                self._task_item.title = "No active task"
+
+    def _get_active_elapsed(self) -> int:
+        """Get elapsed minutes for the currently active task from server."""
+        if not self._active_task_id:
+            return 0
         try:
-            # Capture screen silently (no shutter sound, no UI)
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
-                tmp_path = tf.name
-
-            subprocess.run(
-                ["screencapture", "-x", "-t", "png", tmp_path],
-                check=True,
+            resp = requests.post(
+                f"{FLOWBOARD_URL}/walker/GetActiveTask",
+                headers=self._auth_headers(),
+                json={},
                 timeout=10,
             )
+            data = resp.json()
+            reports = (data.get("data") or {}).get("reports", [])
+            result = reports[0] if reports else {}
+            if result.get("active"):
+                return _elapsed_minutes(
+                    result.get("timer_start", ""),
+                    result.get("timer_accumulated", 0),
+                )
+        except Exception:
+            pass
+        return 0
 
-            with open(tmp_path, "rb") as f:
-                screenshot_b64 = base64.b64encode(f.read()).decode()
+    # ------------------------------------------------------------------
+    # On-task analysis (called when continuing to track the same task)
+    # ------------------------------------------------------------------
 
-        except Exception as exc:
-            print(f"[FlowBoard] Screenshot failed: {exc}")
-            return
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+    def _analyze_active_task(
+        self, task_id: str, task_title: str, screenshot_b64: str
+    ) -> None:
+        """Run AnalyzeScreenshot to check if user is actually on the active task."""
+        elapsed = self._get_active_elapsed()
+
+        # Get task details for category + estimated duration
+        task = self._active_task or {}
+        category = task.get("category", "")
+        estimated = task.get("estimated_duration", 60)
 
         try:
             resp = requests.post(
@@ -325,18 +586,18 @@ class FlowBoardWidget(rumps.App):
                 headers=self._auth_headers(),
                 json={
                     "screenshot_b64": screenshot_b64,
-                    "task_id": task["id"],
-                    "task_title": task["title"],
-                    "task_category": task.get("category", ""),
-                    "elapsed_minutes": elapsed_minutes,
-                    "estimated_minutes": task.get("estimated_duration", 60),
+                    "task_id": task_id,
+                    "task_title": task_title,
+                    "task_category": category,
+                    "elapsed_minutes": elapsed,
+                    "estimated_minutes": estimated,
                 },
                 timeout=30,
             )
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
-            print(f"[FlowBoard] Analysis request failed: {exc}")
+            print(f"[FlowBoard] AnalyzeScreenshot failed: {exc}")
             return
 
         reports = (data.get("data") or {}).get("reports", [])
@@ -346,20 +607,19 @@ class FlowBoardWidget(rumps.App):
         description = result.get("description", "")
         alert_sent = result.get("alert_sent", False)
 
-        # Update menu bar status
         icon = "✓" if on_task else "⚠"
-        self._set_status(f"{icon} {elapsed_minutes} min elapsed")
+        title_display = task_title[:30] + "…" if len(task_title) > 30 else task_title
+        self._set_status(f"{icon} {title_display} ({elapsed} min)")
 
-        # Show native notification if the server triggered an alert
         if alert_sent:
             if not on_task:
                 notif_msg = description or "You may be off task."
             else:
-                over = elapsed_minutes - task.get("estimated_duration", 60)
+                over = elapsed - estimated
                 notif_msg = f"You're {over} min over the estimate. Time to wrap up?"
             _notify(
                 title="FlowBoard",
-                subtitle=f"Task: {task['title']}",
+                subtitle=f"Task: {task_title}",
                 message=notif_msg,
             )
 
