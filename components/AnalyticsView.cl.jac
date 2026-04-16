@@ -129,7 +129,6 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
     return
         <div className="analytics-view">
 
-            {# ── Primary stat row ─────────────────────────────────── #}
             <div className="analytics-stats-row">
                 <div className="analytics-stat-card">
                     <span className="analytics-stat-num">{totalTasks}</span>
@@ -149,7 +148,6 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
                 </div>
             </div>
 
-            {# ── Activity stat row (only once patterns are available) #}
             {(
                 <div className="analytics-stats-row">
                     <div className="analytics-stat-card analytics-stat-oos">
@@ -182,7 +180,6 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
             ) if totalTasks == 0 else (
                 <div>
 
-                    {# Status + Priority charts #}
                     <div className="analytics-charts-row">
                         <div className="analytics-chart-card">
                             <h4 className="analytics-chart-title">Tasks by Status</h4>
@@ -212,7 +209,6 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
                         </div>
                     </div>
 
-                    {# Estimation accuracy from task history #}
                     {(
                         <div className="analytics-charts-row">
                             <div className="analytics-chart-card analytics-chart-wide">
@@ -232,7 +228,6 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
                         </div>
                     ) if len(accuracyData) > 0 else None}
 
-                    {# AI-learned productivity + overrun ratios #}
                     {(
                         <div className="analytics-charts-row">
                             <div className="analytics-chart-card">
@@ -268,7 +263,7 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
                                             formatter={lambda v: any -> any { return [v.toFixed(2) + "×", "Overrun"]; }} />
                                         <Bar dataKey="Ratio" radius={[0, 4, 4, 0]}>
                                             {[
-                                                <Cell key={item.name} fill={item.Ratio > 1.3 ? "#ef4444" : item.Ratio > 1.1 ? "#f59e0b" : "#10b981"} />
+                                                <Cell key={item.name} fill={"#ef4444" if item.Ratio > 1.3 else ("#f59e0b" if item.Ratio > 1.1 else "#10b981")} />
                                                 for item in overrunData
                                             ]}
                                         </Bar>
@@ -278,7 +273,6 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
                         </div>
                     ) if len(productivityData) > 0 or len(overrunData) > 0 else None}
 
-                    {# Schedule density #}
                     <div className="analytics-charts-row">
                         <div className="analytics-chart-card analytics-chart-wide">
                             <h4 className="analytics-chart-title">Schedule Density by Hour</h4>
@@ -294,7 +288,6 @@ def:pub AnalyticsView(tasks: list) -> JsxElement {
                         </div>
                     </div>
 
-                    {# Per-task history table #}
                     {(
                         <div className="analytics-charts-row">
                             <div className="analytics-chart-card analytics-chart-wide">
