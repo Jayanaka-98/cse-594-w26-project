@@ -7,6 +7,7 @@ entry-point = "main.jac"
 [dependencies]
 anthropic = ">=0.30.0"
 byllm = "~=0.6"
+jac-scale = ">=latest"
 
 [dependencies.npm]
 tailwindcss = "^3.4.0"
@@ -51,3 +52,12 @@ sans = ["Inter", "system-ui", "-apple-system", "sans-serif"]
 [plugins.byllm.model]
 default_model = "gpt-4o-mini"
 api_key = "${OPENAI_API_KEY}"
+
+[plugins.scale.secrets]
+OPENAI_API_KEY = "${OPENAI_API_KEY}"
+
+[plugins.scale.kubernetes.plugin_versions]
+jaclang = "latest"
+jac_scale = "latest"
+jac_client = "latest"
+jac_byllm = "latest"
