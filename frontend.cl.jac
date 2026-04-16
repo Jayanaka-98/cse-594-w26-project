@@ -1,7 +1,7 @@
 """FlowBoard - ClickUp-style Project Management Frontend."""
 
 import from "@jac/runtime" { jacSignup, jacLogin, jacLogout, jacIsLoggedIn }
-import from "lucide-react" { Moon, Sun, List, LayoutGrid, Calendar, BarChart2, TrendingUp, X, AlertTriangle, GitMerge, ChevronLeft, ChevronRight }
+import from "lucide-react" { Moon, Sun, LayoutGrid, Calendar, BarChart2, TrendingUp, X, AlertTriangle, ChevronLeft, ChevronRight }
 
 import "./styles.css";
 
@@ -16,7 +16,6 @@ import from .components.GlobalTaskModal { GlobalTaskModal }
 import from .components.DashboardView { DashboardView }
 import from .components.AnalyticsView { AnalyticsView }
 
-import from .components.ModifyScheduleView { ModifyScheduleView }
 import from .components.ChatPanel { ChatPanel }
 import from .components.ConflictResolutionModal { ConflictResolutionModal }
 
@@ -45,7 +44,7 @@ def:pub app -> any {
         showProfile: bool = False,
         loggedInUsername: str = "",
         profileDisplayName: str = "",
-        profileDefaultView: str = "list",
+        profileDefaultView: str = "calendar",
 
         # Data
         lists: list = [],
@@ -55,7 +54,7 @@ def:pub app -> any {
 
         # Navigation
         selectedListId: str = "",
-        view: str = "list",
+        view: str = "calendar",
 
         # Task detail panel state
         selectedTask: dict = {},
@@ -154,6 +153,41 @@ def:pub app -> any {
         filtered = activeTasks.filter(lambda a: any -> bool { return a.active_task_id == taskId; });
         if len(filtered) > 0 { return filtered[0]; }
         return {};
+    }
+
+    def getTaskById(taskId: str) -> dict {
+        found = tasks.filter(lambda t: any -> bool { return t.id == taskId; });
+        if len(found) > 0 { return found[0]; }
+        return {"id": taskId, "title": "Unknown Task", "category": ""};
+    }
+
+    def getElapsedMinutes(at: dict) -> int {
+        accMins = at.timer_accumulated if at.timer_accumulated else 0;
+        if at.is_running and at.timer_start and at.timer_start != "" {
+            nowMs = Date.now();
+            startMs = Date.parse(at.timer_start);
+            liveMins = Math.floor((nowMs - startMs) / 1000 / 60);
+            return accMins + liveMins;
+        }
+        return accMins;
+    }
+
+    def formatElapsed(at: dict, tick: int) -> str {
+        accSecs = (at.timer_accumulated if at.timer_accumulated else 0) * 60;
+        if at.is_running and at.timer_start and at.timer_start != "" {
+            nowMs = Date.now();
+            startMs = Date.parse(at.timer_start);
+            liveSecs = Math.floor((nowMs - startMs) / 1000);
+            accSecs = accSecs + liveSecs;
+        }
+        totalSecs = accSecs + tick * 0;
+        h = Math.floor(totalSecs / 3600);
+        m = Math.floor((totalSecs % 3600) / 60);
+        s = totalSecs % 60;
+        mStr = (m.toString() if m >= 10 else ("0" + m.toString()));
+        sStr = (s.toString() if s >= 10 else ("0" + s.toString()));
+        if h > 0 { return h.toString() + ":" + mStr + ":" + sStr; }
+        return mStr + ":" + sStr;
     }
 
     def computeConflicts(taskList: any, ratios: any) -> dict {
@@ -274,19 +308,58 @@ def:pub app -> any {
                         {(<ChevronLeft size={16} />) if leftPanelOpen else (<ChevronRight size={16} />)}
                     </button>
                     <div className="left-panel-content">
-                        <div className="list-empty-tasks">
-                            {str(len(activeTasks)) + " active timer" + ("" if len(activeTasks) == 1 else "s")}
-                        </div>
+                        <div className="lp-section-title">Active Timers</div>
+                        {(
+                            <div className="lp-no-timers">No active timers</div>
+                        ) if len(activeTasks) == 0 else (
+                            <div className="lp-timer-list">
+                                {[
+                                    <div className="lp-timer-card" key={at.active_task_id} onClick={lambda -> None { openTask(getTaskById(at.active_task_id)); }}>
+                                        <div className="lp-timer-task-name">{getTaskById(at.active_task_id).title}</div>
+                                        {(
+                                            <span className="lp-cat-badge">{getTaskById(at.active_task_id).category}</span>
+                                        ) if getTaskById(at.active_task_id).category and getTaskById(at.active_task_id).category != "" else None}
+                                        <div className="lp-timer-row">
+                                            <span className="lp-timer-time">{formatElapsed(at, timerTick)}</span>
+                                            <span className={"lp-timer-badge" + (" lp-badge-running" if at.is_running else " lp-badge-paused")}>
+                                                {("● Running" if at.is_running else "⏸ Paused")}
+                                            </span>
+                                        </div>
+                                        <div className="lp-timer-actions">
+                                            {(
+                                                <button
+                                                    className="lp-timer-btn lp-btn-pause"
+                                                    onClick={lambda e: any -> None { e.stopPropagation(); pauseTaskTimer(at.active_task_id, getElapsedMinutes(at)); }}
+                                                    title="Pause timer"
+                                                >
+                                                    ⏸ Pause
+                                                </button>
+                                            ) if at.is_running else (
+                                                <button
+                                                    className="lp-timer-btn lp-btn-resume"
+                                                    onClick={lambda e: any -> None { e.stopPropagation(); resumeTaskTimer(getTaskById(at.active_task_id)); }}
+                                                    title="Resume timer"
+                                                >
+                                                    ▶ Resume
+                                                </button>
+                                            )}
+                                            <button
+                                                className="lp-timer-btn lp-btn-done"
+                                                onClick={lambda e: any -> None { e.stopPropagation(); finishTaskTimer(at.active_task_id, getElapsedMinutes(at)); }}
+                                                title="Mark task done"
+                                            >
+                                                ✓ Done
+                                            </button>
+                                        </div>
+                                    </div>
+                                    for at in activeTasks
+                                ]}
+                            </div>
+                        )}
                     </div>
                 </div>
                 <div className="main-content">
                     <div className="view-tab-bar">
-                        <button
-                            onClick={lambda -> None { view = "list"; }}
-                            className={("view-tab active" if view == "list" else "view-tab")}
-                        >
-                            <List size={14} /> List
-                        </button>
                         <button
                             onClick={lambda -> None { view = "board"; }}
                             className={("view-tab active" if view == "board" else "view-tab")}
@@ -311,29 +384,9 @@ def:pub app -> any {
                         >
                             <TrendingUp size={14} /> Analytics
                         </button>
-                        <button
-                            onClick={lambda -> None { view = "replanning"; }}
-                            className={("view-tab active" if view == "replanning" else "view-tab")}
-                        >
-                            <GitMerge size={14} /> Replanning
-                        </button>
                     </div>
 
                     {(
-                        <ModifyScheduleView
-                            tasks={tasks}
-                            conflictInfo={conflictInfo}
-                            aiPlan={aiPlan}
-                            aiPlanLoading={aiPlanLoading}
-                            onBack={lambda -> None { view = "calendar"; }}
-                            onSaved={lambda -> None {
-                                conflictsActive = False;
-                                conflictInfo = {};
-                                aiPlan = None;
-                                fetchTasks();
-                            }}
-                        />
-                    ) if view == "replanning" else (
                         <DashboardView onOpenDetail={openTask} />
                     ) if view == "dashboard" else (
                         <AnalyticsView tasks={tasks} />
