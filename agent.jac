@@ -37,9 +37,9 @@ walker :pub BuildGraph {
     }
     def traverse(dir_path: str, indent: int) -> None {
         # create a Dir node for this path
-        dir_node = DirNode(path=dir_path);
-        root ++> dir_node;
-        self.created.append({"type": "dir", "path": dir_path});
+        
+        [here ->:Follow:-> (?:User)]
+                self.created.append({"type": "dir", "path": dir_path});
 
         # append directory display line
         indent_str = "";

@@ -607,21 +607,33 @@ class FlowBoardWidget(rumps.App):
         description = result.get("description", "")
         alert_sent = result.get("alert_sent", False)
 
-        icon = "✓" if on_task else "⚠"
         title_display = task_title[:30] + "…" if len(task_title) > 30 else task_title
-        self._set_status(f"{icon} {title_display} ({elapsed} min)")
 
-        if alert_sent:
-            if not on_task:
-                notif_msg = description or "You may be off task."
-            else:
-                over = elapsed - estimated
-                notif_msg = f"You're {over} min over the estimate. Time to wrap up?"
+        if not on_task:
+            # User is distracted — pause timer and enter OUT_OF_SCOPE
+            self._server_pause_timer(task_id, elapsed)
+            self._state = STATE_OUT_OF_SCOPE
+            self._active_task_id = ""
+            self._active_task = None
+            self._out_of_scope_start = datetime.now()
+            self._set_status("⚠ Off task — timer paused")
+            self._task_item.title = "Out of scope"
             _notify(
                 title="FlowBoard",
-                subtitle=f"Task: {task_title}",
-                message=notif_msg,
+                subtitle=f"Timer paused: {task_title}",
+                message=description or "You appear to be off task. Timer paused.",
             )
+            print(f"[FlowBoard] AnalyzeScreenshot off-task → OUT_OF_SCOPE, paused timer for {task_id}")
+        else:
+            icon = "✓"
+            self._set_status(f"{icon} {title_display} ({elapsed} min)")
+            if alert_sent:
+                over = elapsed - estimated
+                _notify(
+                    title="FlowBoard",
+                    subtitle=f"Task: {task_title}",
+                    message=f"You're {over} min over the estimate. Time to wrap up?",
+                )
 
 
 # ---------------------------------------------------------------------------

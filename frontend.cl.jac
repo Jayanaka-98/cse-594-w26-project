@@ -100,7 +100,8 @@ def:pub app -> any {
         saved = localStorage.getItem("flowboard_view");
         if saved and saved != "" { view = saved; }
         if not timerIntervalId {
-            timerIntervalId = setInterval(lambda -> None { timerTick = timerTick + 1; }, 1000);
+            timerIntervalId = setInterval(lambda -> None { timerTick = getNowMs(); }, 1000);
+            setInterval(lambda -> None { fetchActiveTasks(); }, 10000);
         }
     }
 
@@ -148,6 +149,11 @@ def:pub app -> any {
     def getSelectedList -> dict;
     def getActiveTaskInfo(taskId: str) -> dict;
     async def saveTaskChanges -> None;
+
+    def getNowMs -> int {
+        d = Reflect.construct(Date, []);
+        return d.getMinutes() * 60 + d.getSeconds();
+    }
 
     def getActiveTaskInfo(taskId: str) -> dict {
         filtered = activeTasks.filter(lambda a: any -> bool { return a.active_task_id == taskId; });
