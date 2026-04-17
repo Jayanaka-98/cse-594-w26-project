@@ -5,49 +5,50 @@ set -euo pipefail
 
 NAMESPACE="default"
 APP_LABEL="app=jaseci"
-TIMEOUT=300
+JAC_SCALE_TIMEOUT=120   # jac start --scale blocks forever; timeout is expected (exit 124)
+READY_TIMEOUT=300       # seconds to wait for pod readiness after deploy
+
+log() { echo "[$(date '+%H:%M:%S')] $*"; }
+die() { echo "ERROR: $*" >&2; exit 1; }
 
 # Check prerequisites
 for cmd in kubectl jac; do
-  command -v "$cmd" &>/dev/null || { echo "Missing: $cmd" >&2; exit 1; }
+  command -v "$cmd" &>/dev/null || die "Missing required command: $cmd"
 done
 
 # Load .env
 if [ -f .env ]; then
   set -a; source .env; set +a
 else
-  echo ".env not found. Copy .env.example to .env and fill in values." >&2
-  exit 1
+  die ".env not found. Copy .env.example to .env and fill in values."
 fi
 
-echo "Checking for existing deployment..."
+# Check for existing deployment
 EXISTING=$(kubectl get pods -n "$NAMESPACE" -l "$APP_LABEL" --no-headers 2>/dev/null | wc -l)
 if [ "$EXISTING" -gt 0 ]; then
-    echo "Deployment already running:"
+    log "Deployment already running:"
     kubectl get pods -n "$NAMESPACE" -l "$APP_LABEL"
-    echo "Run ./teardown.sh first if you want a fresh deployment."
+    log "Run ./teardown.sh first if you want a fresh deployment."
     exit 1
 fi
 
-echo "Starting jac start --scale..."
-jac start main.jac --scale &
-JAC_PID=$!
+# Install jac dependencies
+log "Installing app dependencies..."
+jac install
 
-echo "Waiting for jaseci pod to appear..."
-ELAPSED=0
-until kubectl get pods -n "$NAMESPACE" -l "$APP_LABEL" --no-headers 2>/dev/null | grep -q .; do
-    sleep 3
-    ELAPSED=$((ELAPSED + 3))
-    if [ "$ELAPSED" -ge 60 ]; then
-        echo "Timed out waiting for pod to appear." >&2
-        kill "$JAC_PID" 2>/dev/null || true
-        exit 1
-    fi
-done
+# Deploy — jac start --scale blocks (non-daemon); timeout after JAC_SCALE_TIMEOUT seconds is expected
+log "Running jac start --scale (will timeout after ${JAC_SCALE_TIMEOUT}s — this is expected)..."
+timeout "$JAC_SCALE_TIMEOUT" jac start main.jac --scale || {
+  EXIT=$?
+  if [ "$EXIT" -eq 124 ]; then
+    log "jac start timed out after ${JAC_SCALE_TIMEOUT}s — expected, deployment is running in k8s"
+  else
+    die "jac start failed with exit code $EXIT"
+  fi
+}
 
-# jac-scale network policies block DNS and intra-namespace traffic.
-# Add policies to allow: DNS egress + all intra-namespace pod traffic.
-echo "Patching network policies to allow DNS and intra-namespace traffic..."
+# Fix jac-scale network policies — they block DNS and intra-namespace pod traffic
+log "Patching network policies to allow DNS and intra-namespace traffic..."
 kubectl apply -f - <<'EOF'
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -64,7 +65,9 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
----
+EOF
+
+kubectl apply -f - <<'EOF'
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -83,22 +86,26 @@ spec:
         - podSelector: {}
 EOF
 
-echo "Waiting for pod to become Ready (timeout: ${TIMEOUT}s)..."
+# Restart pod so it picks up the new network policies
+log "Restarting jaseci pod to pick up network policy changes..."
+kubectl rollout restart deployment/jaseci -n "$NAMESPACE"
+
+# Wait for readiness
+log "Waiting for pod to become Ready (timeout: ${READY_TIMEOUT}s)..."
 if kubectl wait pod -n "$NAMESPACE" -l "$APP_LABEL" \
-    --for=condition=Ready --timeout="${TIMEOUT}s"; then
-    echo ""
-    echo "Deployment ready!"
+    --for=condition=Ready --timeout="${READY_TIMEOUT}s"; then
+    log ""
+    log "Deployment ready!"
     kubectl get pods -n "$NAMESPACE"
-    echo ""
-    PUBLIC_IP=$(curl -sf --max-time 5 http://checkip.amazonaws.com || hostname -I | awk '{print $1}')
-    echo "FlowBoard is live at: http://${PUBLIC_IP}:30001/cl/app"
-    echo "API docs:             http://${PUBLIC_IP}:30001/docs"
+    log ""
+    PUBLIC_IP=$(curl -sf --max-time 5 http://checkip.amazonaws.com 2>/dev/null || hostname -I | awk '{print $1}')
+    log "FlowBoard is live at: http://${PUBLIC_IP}:30001/cl/app"
+    log "API docs:             http://${PUBLIC_IP}:30001/docs"
 else
-    echo "Pod did not become Ready within ${TIMEOUT}s." >&2
-    echo "Check init container logs:" >&2
-    echo "  kubectl logs -n $NAMESPACE -l $APP_LABEL -c wait-for-mongodb" >&2
-    echo "  kubectl logs -n $NAMESPACE -l $APP_LABEL -c wait-for-redis" >&2
-    echo "  kubectl logs -n $NAMESPACE -l $APP_LABEL" >&2
-    kill "$JAC_PID" 2>/dev/null || true
+    log "Pod did not become Ready within ${READY_TIMEOUT}s."
+    log "Debug with:"
+    log "  kubectl logs -n $NAMESPACE -l $APP_LABEL -c wait-for-mongodb"
+    log "  kubectl logs -n $NAMESPACE -l $APP_LABEL -c wait-for-redis"
+    log "  kubectl logs -n $NAMESPACE -l $APP_LABEL"
     exit 1
 fi

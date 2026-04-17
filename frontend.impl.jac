@@ -15,6 +15,7 @@ impl app.fetchProfile -> None {
 }
 
 impl app.fetchActiveTasks -> None {
+    if not isLoggedIn { return; }
     result = root spawn ListActiveTasks();
     activeTasks = result.reports[0] if result.reports else [];
 }
