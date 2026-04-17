@@ -45,8 +45,9 @@ until kubectl get pods -n "$NAMESPACE" -l "$APP_LABEL" --no-headers 2>/dev/null 
     fi
 done
 
-# jac-scale network policies block DNS (port 53) egress — patch them to allow it.
-echo "Patching network policies to allow DNS resolution..."
+# jac-scale network policies block DNS and intra-namespace traffic.
+# Add policies to allow: DNS egress + all intra-namespace pod traffic.
+echo "Patching network policies to allow DNS and intra-namespace traffic..."
 kubectl apply -f - <<'EOF'
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -63,6 +64,23 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
 EOF
 
 echo "Waiting for pod to become Ready (timeout: ${TIMEOUT}s)..."
