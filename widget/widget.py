@@ -25,6 +25,7 @@ Run:          python widget.py
 Package:      python setup.py py2app
 """
 
+import argparse
 import base64
 import json
 import os
@@ -37,10 +38,17 @@ import requests
 import rumps
 
 # ---------------------------------------------------------------------------
-# Configuration (override via environment variables)
+# Configuration (CLI args > env vars > defaults)
 # ---------------------------------------------------------------------------
-FLOWBOARD_URL = os.environ.get("FLOWBOARD_URL", "http://localhost:8000").rstrip("/")
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "120"))
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="FlowBoard Activity Tracker")
+    p.add_argument("--server", default=None, help="FlowBoard server URL (e.g. http://147.224.167.95:8000)")
+    p.add_argument("--interval", type=int, default=None, help="Poll interval in seconds (default: 120)")
+    return p.parse_known_args()[0]  # parse_known_args so rumps args don't cause errors
+
+_args = _parse_args()
+FLOWBOARD_URL = (_args.server or os.environ.get("FLOWBOARD_URL", "http://localhost:8000")).rstrip("/")
+POLL_INTERVAL = _args.interval or int(os.environ.get("POLL_INTERVAL", "120"))
 TOKEN_FILE = os.path.expanduser("~/.flowboard_token")
 
 # States
