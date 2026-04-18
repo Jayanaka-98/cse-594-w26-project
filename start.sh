@@ -15,7 +15,7 @@ if [ -f .env ]; then
 fi
 
 mkdir -p .jac
-nohup jac run main.jac --port 8000 > "$LOG_FILE" 2>&1 &
+nohup jac start main.jac --port 8000 > "$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 
 echo "FlowBoard started (pid $!) — logs: $LOG_FILE"
