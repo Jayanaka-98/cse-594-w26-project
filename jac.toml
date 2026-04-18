@@ -50,7 +50,7 @@ plugins = []
 sans = ["Inter", "system-ui", "-apple-system", "sans-serif"]
 
 [plugins.byllm.model]
-default_model = "gpt-4o-mini"
+default_model = "gpt-4o"
 api_key = "${OPENAI_API_KEY}"
 
 [plugins.scale.secrets]

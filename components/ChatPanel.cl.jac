@@ -1,6 +1,6 @@
 """Conversational AI chat panel for agentic task management."""
 
-sv import from main { AgentChat, AgentCheckReady, AgentExecuteCreate, AgentExecuteUpdate, AgentExecuteDelete, AgentExecuteCreateList, ListChatHistory, ClearChatHistory, AIOptimizeSchedule, ApplyReplanChanges, AIEstimateDuration, AIGetAlternativeSlots, UpdateTask }
+sv import from main { AgentChat, AgentCheckReady, AgentExecuteCreate, AgentExecuteUpdate, AgentExecuteDelete, AgentExecuteCreateList, AgentPostAction, SaveChatMessages, ListChatHistory, ClearChatHistory, AIOptimizeSchedule, ApplyReplanChanges, AIEstimateDuration, AIGetAlternativeSlots, UpdateTask }
 import from "lucide-react" { MessageSquare, Send, X, Check, XCircle, Trash2, Bot, User, Search, ChevronDown, ChevronRight, Calendar, Clock }
 import from "react-markdown" { default as Markdown }
 
@@ -16,7 +16,8 @@ def:pub ChatPanel(
         reschedulingTask: dict = {},
         historyLoaded: bool = False,
         toolLogs: dict = {},
-        expandedLogs: dict = {};
+        expandedLogs: dict = {},
+        lastInterceptedMsg: str = "";
 
     can with [isOpen] entry {
         if isOpen and not historyLoaded {
@@ -55,6 +56,27 @@ def:pub ChatPanel(
     async def sendMessage -> None {
         msg = inputText.trim();
         if not msg or loading { return; }
+
+        # If there's a pending action and the user typed an affirmative, treat it as Confirm
+        affirmatives = ["yes", "yes!", "yeah", "yep", "sure", "ok", "okay", "go ahead", "do it", "confirm", "yup", "y"];
+        negatives = ["no", "no!", "nope", "cancel", "reject", "stop", "never mind", "nevermind", "n"];
+        msgLower = str(msg).lower().strip();
+        firstWord = msgLower.split(" ")[0] if " " in msgLower else msgLower;
+        if pendingAction and pendingAction["action_type"] {
+            if msgLower in affirmatives or firstWord in affirmatives {
+                inputText = "";
+                lastInterceptedMsg = str(msg);
+                confirmAction();
+                return;
+            }
+            if msgLower in negatives or firstWord in negatives {
+                inputText = "";
+                lastInterceptedMsg = str(msg);
+                rejectAction();
+                return;
+            }
+        }
+
         inputText = "";
         loading = True;
 
@@ -99,46 +121,34 @@ def:pub ChatPanel(
                     newLogs[botMsgId] = data.tool_events;
                     toolLogs = newLogs;
                 }
-            }
 
-            # Phase 2: Check if all required info is gathered and action is ready
-            if fullText != "" {
-                todayDate = Reflect.construct(Date, []);
-                todayStr = todayDate.getFullYear().toString() + "-" + (todayDate.getMonth() + 1).toString().padStart(2, "0") + "-" + todayDate.getDate().toString().padStart(2, "0");
-
-                readyResult = root spawn AgentCheckReady(
-                    history=currentMessages,
-                    current_date=todayStr
-                );
-                if readyResult.reports {
-                    readiness = readyResult.reports[0];
-                    if readiness["ready"] and readiness["action_type"] != "none" and readiness["action_type"] != "" {
-                        extractedDuration = readiness["task_estimated_duration"];
-                        # If no explicit duration was given (0 or default 60), ask AI to estimate
-                        if readiness["action_type"] == "create_task" and (not extractedDuration or extractedDuration == 60) {
-                            estTitle: str = str(readiness["task_title"]) if readiness["task_title"] else "";
-                            estCat: str = str(readiness["task_category"]) if readiness["task_category"] else "";
-                            estResult = root spawn AIEstimateDuration(task_title=estTitle, category=estCat);
-                            if estResult.reports and estResult.reports[0] {
-                                ed = estResult.reports[0];
-                                if ed["suggested_minutes"] { extractedDuration = ed["suggested_minutes"]; }
-                            }
-                        }
+                # Phase 2: AgentChat returns action fields directly — no second LLM call needed
+                actionType = data["action_type"] if data["action_type"] else "";
+                isReady = data["ready"] if data["ready"] else False;
+                # Hard validation: never show confirm for create_task unless all required fields present
+                taskDuration = data["task_estimated_duration"] if data["task_estimated_duration"] else 0;
+                taskDate = data["task_start_date"] if data["task_start_date"] else "";
+                taskTime = data["task_start_time"] if data["task_start_time"] else "";
+                taskTitle = data["task_title"] if data["task_title"] else "";
+                createTaskReady = actionType != "create_task" or (taskTitle != "" and taskDate != "" and taskTime != "" and taskDuration > 0);
+                if fullText != "" and actionType and actionType != "none" and actionType != "" and isReady and createTaskReady {
+                    alreadyPendingList = pendingAction and pendingAction["action_type"] == "create_list";
+                    if not alreadyPendingList {
                         pendingAction = {
-                            "action_type": readiness["action_type"],
-                            "target_task_id": readiness["target_task_id"],
-                            "task_title": readiness["task_title"],
-                            "task_description": readiness["task_description"],
-                            "task_status": readiness["task_status"],
-                            "task_priority": readiness["task_priority"],
-                            "task_due_date": readiness["task_due_date"],
-                            "task_list_id": readiness["task_list_id"],
-                            "task_list_name": readiness["task_list_name"],
-                            "task_start_date": readiness["task_start_date"],
-                            "task_start_time": readiness["task_start_time"],
-                            "task_end_time": readiness["task_end_time"],
-                            "task_category": readiness["task_category"],
-                            "task_estimated_duration": extractedDuration
+                            "action_type": actionType,
+                            "target_task_id": data["target_task_id"] if data["target_task_id"] else "",
+                            "task_title": data["task_title"] if data["task_title"] else "",
+                            "task_description": data["task_description"] if data["task_description"] else "",
+                            "task_status": data["task_status"] if data["task_status"] else "",
+                            "task_priority": data["task_priority"] if data["task_priority"] else "",
+                            "task_due_date": data["task_due_date"] if data["task_due_date"] else "",
+                            "task_list_id": data["task_list_id"] if data["task_list_id"] else "",
+                            "task_list_name": data["task_list_name"] if data["task_list_name"] else "",
+                            "task_start_date": data["task_start_date"] if data["task_start_date"] else "",
+                            "task_start_time": data["task_start_time"] if data["task_start_time"] else "",
+                            "task_end_time": data["task_end_time"] if data["task_end_time"] else "",
+                            "task_category": data["task_category"] if data["task_category"] else "",
+                            "task_estimated_duration": data["task_estimated_duration"] if data["task_estimated_duration"] else 0
                         };
                     }
                 }
@@ -163,18 +173,21 @@ def:pub ChatPanel(
         loading = True;
         confirmMsg = "";
         success = False;
+        actionName = "";
+        capturedActionType = str(pendingAction.action_type) if pendingAction.action_type else "";
 
         execResult = None;
         if pendingAction.action_type == "create_list" {
             listName = str(pendingAction["task_list_name"]) if pendingAction["task_list_name"] else "";
+            actionName = listName;
             execResult = root spawn AgentExecuteCreateList(list_name=listName);
             if execResult.reports and execResult.reports[0].success {
-                confirmMsg = "Done! List \"" + listName + "\" created. Want to add a task to it?";
                 success = True;
             } else {
                 confirmMsg = "Sorry, I could not create that list. Please try again.";
             }
         } elif pendingAction.action_type == "create_task" {
+            actionName = str(pendingAction.task_title) if pendingAction.task_title else "";
             execResult = root spawn AgentExecuteCreate(
                 task_title=pendingAction.task_title if pendingAction.task_title else "",
                 task_description=pendingAction.task_description if pendingAction.task_description else "",
@@ -189,12 +202,12 @@ def:pub ChatPanel(
                 task_estimated_duration=pendingAction.task_estimated_duration if pendingAction.task_estimated_duration else 60
             );
             if execResult.reports and execResult.reports[0].success {
-                confirmMsg = "Done! Task created successfully.";
                 success = True;
             } else {
                 confirmMsg = "Sorry, I could not create that task. Please try again.";
             }
         } elif pendingAction.action_type == "update_task" {
+            actionName = str(pendingAction.task_title) if pendingAction.task_title else "";
             execResult = root spawn AgentExecuteUpdate(
                 target_task_id=pendingAction.target_task_id if pendingAction.target_task_id else "",
                 task_title=pendingAction.task_title if pendingAction.task_title else "",
@@ -209,18 +222,17 @@ def:pub ChatPanel(
                 task_estimated_duration=pendingAction.task_estimated_duration if pendingAction.task_estimated_duration else 0
             );
             if execResult.reports and execResult.reports[0].success {
-                confirmMsg = "Done! Task updated successfully.";
                 success = True;
             } else {
                 confirmMsg = "Sorry, I could not update that task. Please try again.";
             }
         } elif pendingAction.action_type == "delete_task" {
+            actionName = str(pendingAction.task_title) if pendingAction.task_title else "";
             execResult = root spawn AgentExecuteDelete(
                 target_task_id=pendingAction.target_task_id if pendingAction.target_task_id else "",
                 task_title=pendingAction.task_title if pendingAction.task_title else ""
             );
             if execResult.reports and execResult.reports[0].success {
-                confirmMsg = "Done! Task deleted.";
                 success = True;
             } else {
                 confirmMsg = "Sorry, I could not delete that task. Please try again.";
@@ -253,6 +265,23 @@ def:pub ChatPanel(
             confirmMsg = "Sorry, I could not complete that action. Please try again.";
         }
 
+        # For successful actions, get an LLM-generated confirmation message
+        if success and capturedActionType != "reschedule" {
+            postResult = root spawn AgentPostAction(action_type=capturedActionType, action_name=actionName);
+            if postResult.reports and postResult.reports[0]["message"] {
+                confirmMsg = str(postResult.reports[0]["message"]);
+            } else {
+                confirmMsg = "All set! Let me know what's next.";
+            }
+        }
+
+        # Save to graph so AgentChat has full context on the next user turn
+        root spawn SaveChatMessages(
+            user_message=lastInterceptedMsg,
+            assistant_message=confirmMsg
+        );
+        lastInterceptedMsg = "";
+
         messages = messages.concat([{
             "id": "sys_" + Date.now().toString(),
             "role": "assistant",
@@ -267,12 +296,18 @@ def:pub ChatPanel(
         if success { onTasksChanged(); }
     }
 
-    def rejectAction -> None {
+    async def rejectAction -> None {
+        rejectMsg = "OK, I won't make that change. Let me know if you need anything else.";
+        root spawn SaveChatMessages(
+            user_message=lastInterceptedMsg,
+            assistant_message=rejectMsg
+        );
+        lastInterceptedMsg = "";
         pendingAction = {};
         messages = messages.concat([{
             "id": "sys_" + Date.now().toString(),
             "role": "assistant",
-            "content": "OK, I won't make that change. Let me know if you need anything else.",
+            "content": rejectMsg,
             "action_type": "",
             "action_status": "",
             "timestamp": ""

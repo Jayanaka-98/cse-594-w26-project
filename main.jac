@@ -2558,19 +2558,69 @@ walker:priv ListTaskHistory {
 
 # ===== CONVERSATIONAL AGENT (INVOKE + EXTRACT + PIPE) =====
 
-# --- Agent GENERATE function (context-driven) ---
+# --- Combined agent turn: response + action in one LLM call ---
 
-def agent_respond(
+obj AgentTurn {
+    has response: str;
+    has action_type: str = "";
+    has ready: bool = False;
+    has task_title: str = "";
+    has task_list_name: str = "";
+    has task_list_id: str = "";
+    has task_start_date: str = "";
+    has task_start_time: str = "";
+    has task_end_time: str = "";
+    has task_estimated_duration: int = 0;
+    has task_category: str = "";
+    has task_priority: str = "";
+    has task_status: str = "";
+    has task_due_date: str = "";
+    has task_description: str = "";
+    has target_task_id: str = "";
+}
+sem AgentTurn.response = "The assistant's next reply shown to the user.";
+sem AgentTurn.action_type = "Exactly one of: create_list, create_task, update_task, delete_task, reschedule, none. Set to the action this turn is confirming or gathering info for. 'none' for questions/chitchat.";
+sem AgentTurn.ready = "True ONLY when your response is asking the user to confirm a specific action ('Shall I go ahead?'). False while still gathering missing fields.";
+sem AgentTurn.task_list_name = "For create_list: the exact name of the list to create. Empty string otherwise.";
+sem AgentTurn.task_list_id = "For create_task: list ID from available_lists (e.g. 'list_1'). If user named a just-created list not yet in available_lists, use its name — the system will resolve it. Empty string if truly unknown.";
+sem AgentTurn.task_title = "Task title extracted from conversation. Empty string if unknown.";
+sem AgentTurn.task_description = "Task description if mentioned. Empty string otherwise.";
+sem AgentTurn.task_status = "One of: todo, in_progress, review, done. Empty string if not specified.";
+sem AgentTurn.task_priority = "One of: urgent, high, normal, low. Empty string if not specified.";
+sem AgentTurn.task_due_date = "Deadline date YYYY-MM-DD only if explicitly stated. Empty string otherwise.";
+sem AgentTurn.task_start_date = "Scheduled date YYYY-MM-DD resolved from conversation. Empty string if unknown.";
+sem AgentTurn.task_start_time = "Start time HH:MM 24h (e.g. '2pm' -> '14:00'). Empty string if unknown.";
+sem AgentTurn.task_end_time = "End time HH:MM 24h = start_time + task_estimated_duration. Empty string if either unknown.";
+sem AgentTurn.task_category = "One of: Coding, Research, Writing, Meeting, Admin. Empty string if not specified.";
+sem AgentTurn.task_estimated_duration = "Duration in minutes explicitly provided by the user. 0 if not yet provided.";
+sem AgentTurn.target_task_id = "For reschedule/update/delete: the exact task ID from all_tasks. Empty string otherwise.";
+
+def agent_turn(
     history: list[dict],
     current_date: str,
     available_lists: str,
     all_tasks: str
-) -> str by llm();
-sem agent_respond = "You are FlowBoard AI, a conversational task management assistant. Be friendly and natural — never dump a form or list of fields at the user. The 'history' is the COMPLETE conversation including the user's latest message as the last entry. Generate the NEXT assistant reply. RULES: 1) For CREATE LIST — as soon as the user gives a list name, confirm: 'Got it! I'll create a new list called \"[name]\". Shall I go ahead?' After creating a list, offer to add a task to it straight away. 2) For CREATE TASK — silently extract from history: title (task name), list (any list mentioned, including one just created), date/time, duration (minutes/hours). Ask for ONLY the single next missing field. When asking which list, ALWAYS show options from available_lists plus mention any list the user just created in this conversation. When asking duration, give an example (e.g. 'How long? e.g. 30 or 60 minutes'). Once title + list + date + start_time + duration are all known, confirm: 'Got it! I'll add \"[title]\" to [list] on [date] at [time] for [N] min. Shall I go ahead?' 3) For RESCHEDULE — match the task the user mentions to one in all_tasks, then confirm: 'I'll find better time slots for \"[task title]\" — shall I go ahead?' Do NOT ask for a specific time; the system will suggest the best options automatically. 4) For DELETE/UPDATE: find the task in all_tasks and confirm. 5) Answer direct questions (lists, tasks, schedule) helpfully. 6) Resolve relative dates with current_date. 7) Be concise and warm.";
-sem agent_respond.history = "Complete conversation as list of {role, content} dicts — the user's latest message is the last entry with role='user'. Generate the next assistant reply based on the full conversation.";
-sem agent_respond.current_date = "Today's date YYYY-MM-DD for resolving relative dates.";
-sem agent_respond.available_lists = "All available lists with IDs. Show these when asking which list.";
-sem agent_respond.all_tasks = "All tasks with IDs and details. Use for update/delete and answering questions.";
+) -> AgentTurn by llm(temperature=0.1);
+sem agent_turn = "You are FlowBoard AI. In ONE pass, generate the assistant reply AND extract structured action fields. CONVERSATION RULES: 1) CREATE LIST — only when user explicitly wants a new list OR no lists exist and user wants to add a task. As soon as you have the list name, set response='Got it! I\\'ll create a new list called \"[name]\". Shall I go ahead?', action_type='create_list', task_list_name='[name]', ready=True. 2) CREATE TASK — for any add/schedule/create request. Silently extract title, list, date, start_time, duration from the full history. Ask ONLY for the single next missing field in this ORDER: title → list → date → start_time → duration. When asking duration give an example: 'How long will this take? e.g. 30 or 60 minutes'. NEVER set ready=True if task_estimated_duration is 0 or unknown — duration is REQUIRED. Once title+list+date+start_time+duration are ALL present, set response to a confirmation summary ending with 'Shall I go ahead?', action_type='create_task', ready=True, fill all extracted fields. 3) RESCHEDULE — match task in all_tasks, set response='I\\'ll find better slots for \"[title]\" — shall I go ahead?', action_type='reschedule', target_task_id=<exact id>, ready=True. 4) DELETE/UPDATE — find task in all_tasks, confirm, set action_type and target_task_id, ready=True. 5) Questions — answer helpfully, action_type='none', ready=True. CRITICAL: ready=True ONLY when your response ends with a 'Shall I go ahead?' confirmation AND all required fields are filled. ready=False while gathering any missing field. Resolve relative dates with current_date. Be concise and warm.";
+sem agent_turn.history = "Complete conversation as {role, content} dicts with the user's latest message last.";
+sem agent_turn.current_date = "Today's date YYYY-MM-DD for resolving relative dates.";
+sem agent_turn.available_lists = "All existing lists with IDs. Show these when asking which list.";
+sem agent_turn.all_tasks = "All tasks with IDs and details. Use for reschedule/update/delete and answering questions.";
+
+# --- Post-action LLM confirmation ---
+
+def gen_post_action_msg(action_type: str, action_name: str) -> str by llm(temperature=0.7);
+sem gen_post_action_msg = "You are FlowBoard AI. Generate a brief (1-2 sentence), warm, natural confirmation message after completing an action in a task manager. action_type is one of: create_list, create_task, update_task, delete_task. action_name is the name of the task or list. Be conversational and varied — avoid starting every response the same way. For create_list, naturally offer to add a task to it. For create_task, let them know it's scheduled and ask if they need anything else. For update_task or delete_task, confirm briefly.";
+
+walker:priv AgentPostAction {
+    has action_type: str;
+    has action_name: str = "";
+
+    can run with Root entry {
+        msg = gen_post_action_msg(action_type=self.action_type, action_name=self.action_name);
+        report {"message": str(msg) if msg else "All set! Let me know what's next."};
+    }
+}
 
 # --- Action types ---
 
@@ -2647,7 +2697,7 @@ def check_task_readiness(
     available_lists: str,
     available_tasks: str
 ) -> TaskReadiness by llm(temperature=0.1);
-sem check_task_readiness = "Analyze the COMPLETE conversation history and extract all task action fields. RULES: (1) Scan every message for title, list, date, time, duration. (2) For create_list: ready=True as soon as task_list_name is known. (3) For create_task: ready=True when task_title, task_list_id, task_start_date, task_start_time, and task_estimated_duration > 0 are ALL extractable. If the user said they want to use a list they just created (referring to it by name) and that name does not yet appear in available_lists, still set task_list_id to the name — the system will resolve it after creation. (4) For reschedule: match the task the user refers to against available_tasks — set target_task_id to its EXACT id. ready=True as soon as target_task_id is identified; the system will find better slots automatically. (5) For delete_task or update_task: match the task the user refers to against available_tasks by title and schedule — set target_task_id to the EXACT id from available_tasks. ready=True when target_task_id is identified. (6) For general questions: action_type='none', ready=True. (7) Resolve relative dates with current_date. Convert 12h to 24h. Compute task_end_time = start_time + duration. (8) Match list names to IDs using available_lists. Only add a field to 'missing' if it genuinely cannot be found anywhere in history.";
+sem check_task_readiness = "Analyze the COMPLETE conversation history and extract all task action fields. STEP 1 — Determine action_type from the MOST RECENT assistant message, not the user's original intent: if the most recent assistant message says it will create a list (e.g. contains 'create a new list called' or 'create a list called'), set action_type='create_list'. If the most recent assistant message is confirming a task will be added/created, set action_type='create_task'. If it is confirming a reschedule, set action_type='reschedule'. If it is confirming a delete or update, set action_type accordingly. If it is asking a clarifying question (not confirming an action), infer action_type from the overall conversation goal. STEP 2 — Extract fields: (1) Scan every message for title, list, date, time, duration. (2) For create_list: ready=True as soon as task_list_name is known. Extract task_list_name from the most recent assistant message if it names the list. (3) For create_task: ready=True when task_title, task_list_id, task_start_date, task_start_time, and task_estimated_duration > 0 are ALL extractable. If the user referred to a list by name that does not yet appear in available_lists, set task_list_id to that name — the system will resolve it. (4) For reschedule: match the task against available_tasks, set target_task_id to its exact id. ready=True as soon as target_task_id is identified. (5) For delete_task or update_task: match task in available_tasks by title/schedule, set target_task_id to exact id. ready=True when identified. (6) For general questions: action_type='none', ready=True. (7) Resolve relative dates with current_date. Convert 12h to 24h. Compute task_end_time = start_time + duration. (8) Match list names to IDs using available_lists.";
 sem check_task_readiness.history = "Full conversation as list of {role, content} dicts. Scan ALL entries.";
 sem check_task_readiness.current_date = "Today's date YYYY-MM-DD for resolving relative dates.";
 sem check_task_readiness.available_lists = "List names with IDs (e.g. 'Research (id: list_2)'). Match user's list name to the correct ID.";
@@ -2754,13 +2804,22 @@ walker:priv AgentChat {
 
         current_dt = datetime.now().strftime("%Y-%m-%d");
 
-        # GENERATE: LLM responds with full context
-        response = agent_respond(
+        # Pre-check: if no lists exist, tell the LLM so it prompts the user to create one first
+        if len(self.all_lists) == 0 {
+            history_list.insert(0, {
+                "role": "system",
+                "content": "No lists exist in the system yet. If the user wants to create a task, you MUST first ask them to create a list. Suggest they create one (e.g. 'To add a task, you\\'ll need a list first — what would you like to call it?')."
+            });
+        }
+
+        # Single LLM call: generates response AND extracts action fields simultaneously
+        turn = agent_turn(
             history=history_list,
-            current_date=current_dt,
+            current_date=str(current_dt),
             available_lists=lists_ctx,
             all_tasks=tasks_ctx
         );
+        response_text: str = str(turn.response) if turn.response else "";
 
         # Find or create ChatSession, then save messages there
         session = None;
@@ -2786,12 +2845,27 @@ walker:priv AgentChat {
         session ++> ChatMessage(
             id="chat_" + str(chat_msg_counter),
             role="assistant",
-            content=response,
+            content=response_text,
             timestamp=datetime.now().isoformat()
         );
 
         report {
-            "content": response,
+            "content": response_text,
+            "action_type": str(turn.action_type) if turn.action_type else "",
+            "ready": turn.ready if turn.ready else False,
+            "task_title": str(turn.task_title) if turn.task_title else "",
+            "task_list_name": str(turn.task_list_name) if turn.task_list_name else "",
+            "task_list_id": str(turn.task_list_id) if turn.task_list_id else "",
+            "task_start_date": str(turn.task_start_date) if turn.task_start_date else "",
+            "task_start_time": str(turn.task_start_time) if turn.task_start_time else "",
+            "task_end_time": str(turn.task_end_time) if turn.task_end_time else "",
+            "task_estimated_duration": turn.task_estimated_duration if turn.task_estimated_duration else 0,
+            "task_category": str(turn.task_category) if turn.task_category else "",
+            "task_priority": str(turn.task_priority) if turn.task_priority else "",
+            "task_status": str(turn.task_status) if turn.task_status else "",
+            "task_due_date": str(turn.task_due_date) if turn.task_due_date else "",
+            "task_description": str(turn.task_description) if turn.task_description else "",
+            "target_task_id": str(turn.target_task_id) if turn.target_task_id else "",
             "tool_events": []
         };
     }
@@ -3112,6 +3186,32 @@ walker:priv AgentExecuteCreateList {
         } else {
             report {"success": False, "error": "Could not create list"};
         }
+    }
+}
+
+walker:priv SaveChatMessages {
+    has user_message: str = "";
+    has assistant_message: str = "";
+
+    can save with Root entry {
+        global chat_msg_counter;
+        session = None;
+        for child in [-->] {
+            if isinstance(child, ChatSession) { session = child; }
+        }
+        if session is None {
+            result = here ++> ChatSession(id="chat_session");
+            session = result[0];
+        }
+        if self.user_message != "" {
+            chat_msg_counter += 1;
+            session ++> ChatMessage(id="chat_" + str(chat_msg_counter), role="user", content=self.user_message, timestamp=datetime.now().isoformat());
+        }
+        if self.assistant_message != "" {
+            chat_msg_counter += 1;
+            session ++> ChatMessage(id="chat_" + str(chat_msg_counter), role="assistant", content=self.assistant_message, timestamp=datetime.now().isoformat());
+        }
+        report {"saved": True};
     }
 }
 
