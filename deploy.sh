@@ -86,15 +86,14 @@ spec:
         - podSelector: {}
 EOF
 
-# Fix busybox nc -z incompatibility (Oracle Cloud / some k8s distros ship a
-# busybox build where nc -z exits non-zero even on success). Replace both init
-# container health checks with plain nc (no -z) which works everywhere.
-log "Patching init container health checks for busybox nc compatibility..."
+# Replace init container health checks with a fixed sleep. MongoDB and Redis
+# are already Running before the jaseci pod starts, so a short sleep is enough.
+# (busybox nc on Oracle Cloud exits non-zero even on successful connections,
+# making any nc-based liveness check unreliable in this environment.)
+log "Patching init container health checks..."
 kubectl patch deployment jaseci -n "$NAMESPACE" --type='json' -p='[
-  {"op":"replace","path":"/spec/template/spec/initContainers/0/command",
-   "value":["sh","-c","until nc jaseci-mongodb-service 27017 </dev/null 2>/dev/null; do echo waiting for mongodb; sleep 3; done"]},
-  {"op":"replace","path":"/spec/template/spec/initContainers/1/command",
-   "value":["sh","-c","until nc jaseci-redis-service 6379 </dev/null 2>/dev/null; do echo waiting for redis; sleep 3; done"]}
+  {"op":"replace","path":"/spec/template/spec/initContainers/0/command","value":["sh","-c","sleep 10"]},
+  {"op":"replace","path":"/spec/template/spec/initContainers/1/command","value":["sh","-c","sleep 5"]}
 ]'
 
 # Restart pod so it picks up the network policy changes and the nc fix
