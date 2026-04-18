@@ -2802,7 +2802,7 @@ walker:priv AgentChat {
         # Append current user message so model sees the full turn
         history_list.append({"role": "user", "content": self.message});
 
-        now_dt = datetime.now();
+        now_dt = datetime.now() - timedelta(hours=4);  # UTC → EDT
         today_iso = str(now_dt.strftime("%Y-%m-%d"));
         tomorrow_iso = str((now_dt + timedelta(days=1)).strftime("%Y-%m-%d"));
         date_ctx = "Today: " + today_iso + " | Tomorrow: " + tomorrow_iso;
