@@ -2919,9 +2919,18 @@ html, body, #root {
 .chat-confirm-bar {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 16px; background: var(--bg-card); border-top: 1px solid var(--border);
+    gap: 10px;
 }
+.chat-confirm-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .chat-confirm-label { font-size: 13px; font-weight: 600; color: var(--text); }
-.chat-confirm-btns { display: flex; gap: 6px; }
+.chat-confirm-details { display: flex; flex-wrap: wrap; gap: 5px; }
+.chat-confirm-detail-item {
+    font-size: 11px; color: var(--text-2);
+    background: var(--bg-raised); border-radius: 4px; padding: 2px 7px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px;
+}
+.chat-confirm-detail-list { color: var(--accent); }
+.chat-confirm-btns { display: flex; gap: 6px; flex-shrink: 0; }
 .chat-confirm-yes, .chat-confirm-no {
     display: flex; align-items: center; gap: 4px; padding: 5px 12px;
     border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; border: none;

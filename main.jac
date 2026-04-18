@@ -2802,7 +2802,10 @@ walker:priv AgentChat {
         # Append current user message so model sees the full turn
         history_list.append({"role": "user", "content": self.message});
 
-        current_dt = datetime.now().strftime("%Y-%m-%d");
+        now_dt = datetime.now();
+        today_iso = str(now_dt.strftime("%Y-%m-%d"));
+        tomorrow_iso = str((now_dt + timedelta(days=1)).strftime("%Y-%m-%d"));
+        date_ctx = "Today: " + today_iso + " | Tomorrow: " + tomorrow_iso;
 
         # Pre-check: if no lists exist, tell the LLM so it prompts the user to create one first
         if len(self.all_lists) == 0 {
@@ -2815,7 +2818,7 @@ walker:priv AgentChat {
         # Single LLM call: generates response AND extracts action fields simultaneously
         turn = agent_turn(
             history=history_list,
-            current_date=str(current_dt),
+            current_date=date_ctx,
             available_lists=lists_ctx,
             all_tasks=tasks_ctx
         );

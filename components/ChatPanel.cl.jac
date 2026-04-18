@@ -563,9 +563,47 @@ def:pub ChatPanel(
 
                     {(
                         <div className="chat-confirm-bar">
-                            <span className="chat-confirm-label">
-                                {getActionLabel(pendingAction.action_type) + "?"}
-                            </span>
+                            <div className="chat-confirm-info">
+                                <span className="chat-confirm-label">
+                                    {getActionLabel(pendingAction.action_type) + "?"}
+                                </span>
+                                {(
+                                    <div className="chat-confirm-details">
+                                        {(
+                                            <span className="chat-confirm-detail-item">
+                                                {"\"" + str(pendingAction["task_title"]) + "\""}
+                                            </span>
+                                        ) if pendingAction["task_title"] and str(pendingAction["task_title"]) != "" else None}
+                                        {(
+                                            <span className="chat-confirm-detail-item chat-confirm-detail-list">
+                                                {str(pendingAction["task_list_name"]) if pendingAction["task_list_name"] and str(pendingAction["task_list_name"]) != "" else str(pendingAction["task_list_id"])}
+                                            </span>
+                                        ) if (pendingAction["task_list_name"] and str(pendingAction["task_list_name"]) != "") or (pendingAction["task_list_id"] and str(pendingAction["task_list_id"]) != "") else None}
+                                        {(
+                                            <span className="chat-confirm-detail-item">
+                                                {str(pendingAction["task_start_date"])}
+                                            </span>
+                                        ) if pendingAction["task_start_date"] and str(pendingAction["task_start_date"]) != "" else None}
+                                        {(
+                                            <span className="chat-confirm-detail-item">
+                                                {str(pendingAction["task_start_time"]) + ((" – " + str(pendingAction["task_end_time"])) if pendingAction["task_end_time"] and str(pendingAction["task_end_time"]) != "" else "")}
+                                            </span>
+                                        ) if pendingAction["task_start_time"] and str(pendingAction["task_start_time"]) != "" else None}
+                                        {(
+                                            <span className="chat-confirm-detail-item">
+                                                {str(pendingAction["task_estimated_duration"]) + " min"}
+                                            </span>
+                                        ) if pendingAction["task_estimated_duration"] and pendingAction["task_estimated_duration"] > 0 else None}
+                                    </div>
+                                ) if pendingAction.action_type == "create_task" else None}
+                                {(
+                                    <div className="chat-confirm-details">
+                                        <span className="chat-confirm-detail-item">
+                                            {"\"" + str(pendingAction["task_list_name"]) + "\""}
+                                        </span>
+                                    </div>
+                                ) if pendingAction.action_type == "create_list" and pendingAction["task_list_name"] else None}
+                            </div>
                             <div className="chat-confirm-btns">
                                 <button
                                     className="chat-confirm-yes"
