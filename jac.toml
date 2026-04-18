@@ -7,7 +7,7 @@ entry-point = "main.jac"
 [dependencies]
 anthropic = ">=0.30.0"
 byllm = "~=0.6"
-jac-scale = ">=latest"
+jac-scale = ">=0.1.0"
 
 [dependencies.npm]
 tailwindcss = "^3.4.0"
