@@ -86,7 +86,18 @@ spec:
         - podSelector: {}
 EOF
 
-# Restart pod so it picks up the new network policies
+# Fix busybox nc -z incompatibility (Oracle Cloud / some k8s distros ship a
+# busybox build where nc -z exits non-zero even on success). Replace both init
+# container health checks with plain nc (no -z) which works everywhere.
+log "Patching init container health checks for busybox nc compatibility..."
+kubectl patch deployment jaseci -n "$NAMESPACE" --type='json' -p='[
+  {"op":"replace","path":"/spec/template/spec/initContainers/0/command",
+   "value":["sh","-c","until nc jaseci-mongodb-service 27017 </dev/null 2>/dev/null; do echo waiting for mongodb; sleep 3; done"]},
+  {"op":"replace","path":"/spec/template/spec/initContainers/1/command",
+   "value":["sh","-c","until nc jaseci-redis-service 6379 </dev/null 2>/dev/null; do echo waiting for redis; sleep 3; done"]}
+]'
+
+# Restart pod so it picks up the network policy changes and the nc fix
 log "Restarting jaseci pod to pick up network policy changes..."
 kubectl rollout restart deployment/jaseci -n "$NAMESPACE"
 
